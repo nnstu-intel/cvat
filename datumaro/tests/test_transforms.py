@@ -159,8 +159,10 @@ class TransformsTest(TestCase):
                                     [1, 0, 0, 0, 0],
                                     [1, 1, 1, 0, 0]],
                                 ),
-                                z_order=0),
+                                z_order=0, group=1),
                             Polygon([1, 1, 4, 1, 4, 4, 1, 4],
+                                z_order=1, group=1),
+                            Polygon([0, 0, 0, 2, 2, 2, 2, 0],
                                 z_order=1),
                         ]
                     ),
@@ -178,7 +180,15 @@ class TransformsTest(TestCase):
                                     [1, 1, 1, 1, 0],
                                     [1, 1, 1, 0, 0]],
                                 ),
-                                z_order=0),
+                                z_order=0, group=1),
+                            Mask(np.array([
+                                    [1, 1, 0, 0, 0],
+                                    [1, 1, 0, 0, 0],
+                                    [0, 0, 0, 0, 0],
+                                    [0, 0, 0, 0, 0],
+                                    [0, 0, 0, 0, 0]],
+                                ),
+                                z_order=1),
                         ]
                     ),
                 ])
@@ -260,4 +270,53 @@ class TransformsTest(TestCase):
                 ])
 
         actual = transforms.IdFromImageName(SrcExtractor())
+        compare_datasets(self, DstExtractor(), actual)
+
+    def test_boxes_to_masks(self):
+        class SrcExtractor(Extractor):
+            def __iter__(self):
+                return iter([
+                    DatasetItem(id=1, image=np.zeros((5, 5, 3)),
+                        annotations=[
+                            Bbox(0, 0, 3, 3, z_order=1),
+                            Bbox(0, 0, 3, 1, z_order=2),
+                            Bbox(0, 2, 3, 1, z_order=3),
+                        ]
+                    ),
+                ])
+
+        class DstExtractor(Extractor):
+            def __iter__(self):
+                return iter([
+                    DatasetItem(id=1, image=np.zeros((5, 5, 3)),
+                        annotations=[
+                            Mask(np.array([
+                                    [1, 1, 1, 0, 0],
+                                    [1, 1, 1, 0, 0],
+                                    [1, 1, 1, 0, 0],
+                                    [0, 0, 0, 0, 0],
+                                    [0, 0, 0, 0, 0]],
+                                ),
+                                z_order=1),
+                            Mask(np.array([
+                                    [1, 1, 1, 0, 0],
+                                    [0, 0, 0, 0, 0],
+                                    [0, 0, 0, 0, 0],
+                                    [0, 0, 0, 0, 0],
+                                    [0, 0, 0, 0, 0]],
+                                ),
+                                z_order=2),
+                            Mask(np.array([
+                                    [0, 0, 0, 0, 0],
+                                    [0, 0, 0, 0, 0],
+                                    [1, 1, 1, 0, 0],
+                                    [0, 0, 0, 0, 0],
+                                    [0, 0, 0, 0, 0]],
+                                ),
+                                z_order=3),
+                        ]
+                    ),
+                ])
+
+        actual = transforms.BoxesToMasks(SrcExtractor())
         compare_datasets(self, DstExtractor(), actual)
