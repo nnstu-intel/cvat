@@ -1,3 +1,7 @@
+// Copyright (C) 2020 Intel Corporation
+//
+// SPDX-License-Identifier: MIT
+
 import {
     AnyAction,
     Dispatch,
@@ -13,9 +17,11 @@ import {
     ObjectType,
     Task,
     FrameSpeed,
+    Rotation,
 } from 'reducers/interfaces';
 
 import getCore from 'cvat-core';
+import { RectDrawingMethod } from 'cvat-canvas';
 import { getCVATStore } from 'cvat-store';
 
 const cvat = getCore();
@@ -124,6 +130,7 @@ export enum AnnotationActionTypes {
     CHANGE_ANNOTATIONS_FILTERS = 'CHANGE_ANNOTATIONS_FILTERS',
     FETCH_ANNOTATIONS_SUCCESS = 'FETCH_ANNOTATIONS_SUCCESS',
     FETCH_ANNOTATIONS_FAILED = 'FETCH_ANNOTATIONS_FAILED',
+    ROTATE_FRAME = 'ROTATE_FRAME',
     SWITCH_Z_LAYER = 'SWITCH_Z_LAYER',
     ADD_Z_LAYER = 'ADD_Z_LAYER',
 }
@@ -661,6 +668,27 @@ ThunkAction<Promise<void>, {}, {}, AnyAction> {
     };
 }
 
+
+export function rotateCurrentFrame(rotation: Rotation): AnyAction {
+    const state: CombinedState = getStore().getState();
+    const { number: frameNumber } = state.annotation.player.frame;
+    const { startFrame } = state.annotation.job.instance;
+    const { frameAngles } = state.annotation.player;
+    const { rotateAll } = state.settings.player;
+
+    const frameAngle = (frameAngles[frameNumber - startFrame]
+        + (rotation === Rotation.CLOCKWISE90 ? 90 : 270)) % 360;
+
+    return {
+        type: AnnotationActionTypes.ROTATE_FRAME,
+        payload: {
+            offset: frameNumber - state.annotation.job.instance.startFrame,
+            angle: frameAngle,
+            rotateAll,
+        },
+    };
+}
+
 export function dragCanvas(enabled: boolean): AnyAction {
     return {
         type: AnnotationActionTypes.DRAG_CANVAS,
@@ -803,7 +831,7 @@ export function drawShape(
     labelID: number,
     objectType: ObjectType,
     points?: number,
-    rectDrawingMethod?: string,
+    rectDrawingMethod?: RectDrawingMethod,
 ): AnyAction {
     let activeControl = ActiveControl.DRAW_RECTANGLE;
     if (shapeType === ShapeType.POLYGON) {
@@ -1037,6 +1065,25 @@ export function changeLabelColorAsync(
                     error,
                 },
             });
+        }
+    };
+}
+
+export function changeGroupColorAsync(
+    sessionInstance: any,
+    frameNumber: number,
+    group: number,
+    color: string,
+): ThunkAction<Promise<void>, {}, {}, AnyAction> {
+    return async (dispatch: ActionCreator<Dispatch>): Promise<void> => {
+        const state: CombinedState = getStore().getState();
+        const groupStates = state.annotation.annotations.states
+            .filter((_state: any): boolean => _state.group.id === group);
+        if (groupStates.length) {
+            groupStates[0].group.color = color;
+            dispatch(updateAnnotationsAsync(sessionInstance, frameNumber, groupStates));
+        } else {
+            dispatch(updateAnnotationsAsync(sessionInstance, frameNumber, []));
         }
     };
 }
