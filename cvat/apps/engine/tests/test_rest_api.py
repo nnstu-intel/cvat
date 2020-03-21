@@ -2638,6 +2638,56 @@ class TaskAnnotationAPITestCase(JobAnnotationAPITestCase):
                 "occluded": False
             }]
 
+            polygon_shapes_with_attrs = [{
+                "frame": 2,
+                "label_id": task["labels"][0]["id"],
+                "group": 1,
+                "attributes": [
+                    {
+                        "spec_id": task["labels"][0]["attributes"][0]["id"],
+                        "value": task["labels"][0]["attributes"][0]["values"][1]
+                    },
+                    {
+                        "spec_id": task["labels"][0]["attributes"][1]["id"],
+                        "value": task["labels"][0]["attributes"][1]["default_value"]
+                    }
+                ],
+                "points": [20.0, 0.1, 10, 3.22, 4, 7, 10, 30, 1, 2, 4.44, 5.55],
+                "type": "polygon",
+                "occluded": True
+            },
+            {
+                "frame": 2,
+                "label_id": task["labels"][1]["id"],
+                "group": 1,
+                "attributes": [],
+                "points": [4, 7, 10, 30, 4, 5.55],
+                "type": "polygon",
+                "occluded": False
+            }]
+
+            tags_wo_attrs = [{
+                "frame": 2,
+                "label_id": task["labels"][1]["id"],
+                "group": 0,
+                "attributes": []
+            }]
+            tags_with_attrs = [{
+                "frame": 1,
+                "label_id": task["labels"][0]["id"],
+                "group": 3,
+                "attributes": [
+                    {
+                        "spec_id": task["labels"][0]["attributes"][0]["id"],
+                        "value": task["labels"][0]["attributes"][0]["values"][1]
+                    },
+                    {
+                        "spec_id": task["labels"][0]["attributes"][1]["id"],
+                        "value": task["labels"][0]["attributes"][1]["default_value"]
+                    }
+                ],
+            }]
+
             annotations = {
                     "version": 0,
                     "tags": [],
@@ -2648,12 +2698,17 @@ class TaskAnnotationAPITestCase(JobAnnotationAPITestCase):
                 annotations["tracks"] = rectangle_tracks_with_attrs + rectangle_tracks_wo_attrs
 
             elif annotation_format == "CVAT XML 1.1 for images":
-                annotations["shapes"] = rectangle_shapes_with_attrs + rectangle_shapes_wo_attrs
+                annotations["shapes"] = rectangle_shapes_with_attrs + rectangle_shapes_wo_attrs \
+                    + polygon_shapes_wo_attrs + polygon_shapes_with_attrs
+                annotations["tags"] = tags_with_attrs + tags_wo_attrs
 
-            elif annotation_format == "PASCAL VOC ZIP 1.1" or \
-                 annotation_format == "YOLO ZIP 1.1" or \
+            elif annotation_format == "PASCAL VOC ZIP 1.1":
+                annotations["shapes"] = rectangle_shapes_wo_attrs
+                annotations["tags"] = tags_wo_attrs
+
+            elif annotation_format == "YOLO ZIP 1.1" or \
                  annotation_format == "TFRecord ZIP 1.0":
-                 annotations["shapes"] = rectangle_shapes_wo_attrs
+                annotations["shapes"] = rectangle_shapes_wo_attrs
 
             elif annotation_format == "COCO JSON 1.0":
                 annotations["shapes"] = polygon_shapes_wo_attrs
@@ -2664,6 +2719,12 @@ class TaskAnnotationAPITestCase(JobAnnotationAPITestCase):
 
             elif annotation_format == "MOT CSV 1.0":
                 annotations["tracks"] = rectangle_tracks_wo_attrs
+
+            elif annotation_format == "LabelMe ZIP 3.0 for images":
+                annotations["shapes"] = rectangle_shapes_with_attrs + \
+                                        rectangle_shapes_wo_attrs + \
+                                        polygon_shapes_wo_attrs + \
+                                        polygon_shapes_with_attrs
 
             return annotations
 

@@ -12,18 +12,11 @@ from xml.sax.saxutils import XMLGenerator
 from datumaro.components.cli_plugin import CliPlugin
 from datumaro.components.converter import Converter
 from datumaro.components.extractor import DEFAULT_SUBSET_NAME, AnnotationType
+from datumaro.util import cast
 from datumaro.util.image import save_image
 
 from .format import CvatPath
 
-
-def _cast(value, type_conv, default=None):
-    if value is None:
-        return default
-    try:
-        return type_conv(value)
-    except Exception:
-        return default
 
 def pairwise(iterable):
     a = iter(iterable)
@@ -113,6 +106,11 @@ class XmlAnnotationWriter:
         self.xmlgen.startElement('points', points)
         self._level += 1
 
+    def open_tag(self, tag):
+        self._indent()
+        self.xmlgen.startElement("tag", tag)
+        self._level += 1
+
     def add_attribute(self, attribute):
         self._indent()
         self.xmlgen.startElement('attribute', {'name': attribute['name']})
@@ -135,6 +133,9 @@ class XmlAnnotationWriter:
 
     def close_points(self):
         self._close_element('points')
+
+    def close_tag(self):
+        self._close_element('tag')
 
     def close_image(self):
         self._close_element('image')
@@ -180,7 +181,7 @@ class _SubsetWriter:
 
     def _write_item(self, item, index):
         image_info = OrderedDict([
-            ("id", str(_cast(item.id, int, index))),
+            ("id", str(cast(item.id, int, index))),
         ])
         if item.has_image:
             size = item.image.size
@@ -201,6 +202,8 @@ class _SubsetWriter:
             if ann.type in {AnnotationType.points, AnnotationType.polyline,
                     AnnotationType.polygon, AnnotationType.bbox}:
                 self._write_shape(ann)
+            elif ann.type == AnnotationType.label:
+                self._write_tag(ann)
             else:
                 continue
 
@@ -302,6 +305,28 @@ class _SubsetWriter:
             self._writer.close_points()
         else:
             raise NotImplementedError("unknown shape type")
+
+    def _write_tag(self, label):
+        if label.label is None:
+            return
+
+        tag_data = OrderedDict([
+            ('label', self._get_label(label.label).name),
+        ])
+        if label.group:
+            tag_data['group_id'] = str(label.group)
+        self._writer.open_tag(tag_data)
+
+        for attr_name, attr_value in label.attributes.items():
+            if isinstance(attr_value, bool):
+                attr_value = 'true' if attr_value else 'false'
+            if attr_name in self._get_label(label.label).attributes:
+                self._writer.add_attribute(OrderedDict([
+                    ("name", str(attr_name)),
+                    ("value", str(attr_value)),
+                ]))
+
+        self._writer.close_tag()
 
 class _Converter:
     def __init__(self, extractor, save_dir, save_images=False):
