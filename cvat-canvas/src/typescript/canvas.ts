@@ -8,24 +8,17 @@ import {
     MergeData,
     SplitData,
     GroupData,
+    InteractionData,
+    InteractionResult,
     CanvasModel,
     CanvasModelImpl,
     RectDrawingMethod,
+    CuboidDrawingMethod,
+    Configuration,
 } from './canvasModel';
-
-import {
-    Master,
-} from './master';
-
-import {
-    CanvasController,
-    CanvasControllerImpl,
-} from './canvasController';
-
-import {
-    CanvasView,
-    CanvasViewImpl,
-} from './canvasView';
+import { Master } from './master';
+import { CanvasController, CanvasControllerImpl } from './canvasController';
+import { CanvasView, CanvasViewImpl } from './canvasView';
 
 import '../scss/canvas.scss';
 import pjson from '../../package.json';
@@ -34,14 +27,14 @@ const CanvasVersion = pjson.version;
 
 interface Canvas {
     html(): HTMLDivElement;
-    setZLayer(zLayer: number | null): void;
-    setup(frameData: any, objectStates: any[]): void;
+    setup(frameData: any, objectStates: any[], zLayer?: number): void;
     activate(clientID: number | null, attributeID?: number): void;
     rotate(rotationAngle: number): void;
     focus(clientID: number, padding?: number): void;
     fit(): void;
     grid(stepX: number, stepY: number): void;
 
+    interact(interactionData: InteractionData): void;
     draw(drawData: DrawData): void;
     group(groupData: GroupData): void;
     split(splitData: SplitData): void;
@@ -49,11 +42,14 @@ interface Canvas {
     select(objectState: any): void;
 
     fitCanvas(): void;
+    bitmap(enable: boolean): void;
     dragCanvas(enable: boolean): void;
     zoomCanvas(enable: boolean): void;
 
-    mode(): void;
+    mode(): Mode;
     cancel(): void;
+    configure(configuration: Configuration): void;
+    isAbleToChangeFrame(): boolean;
 }
 
 class CanvasImpl implements Canvas {
@@ -71,12 +67,8 @@ class CanvasImpl implements Canvas {
         return this.view.html();
     }
 
-    public setZLayer(zLayer: number | null): void {
-        this.model.setZLayer(zLayer);
-    }
-
-    public setup(frameData: any, objectStates: any[]): void {
-        this.model.setup(frameData, objectStates);
+    public setup(frameData: any, objectStates: any[], zLayer = 0): void {
+        this.model.setup(frameData, objectStates, zLayer);
     }
 
     public fitCanvas(): void {
@@ -84,6 +76,10 @@ class CanvasImpl implements Canvas {
             this.view.html().clientWidth,
             this.view.html().clientHeight,
         );
+    }
+
+    public bitmap(enable: boolean): void {
+        this.model.bitmap(enable);
     }
 
     public dragCanvas(enable: boolean): void {
@@ -114,6 +110,10 @@ class CanvasImpl implements Canvas {
         this.model.grid(stepX, stepY);
     }
 
+    public interact(interactionData: InteractionData): void {
+        this.model.interact(interactionData);
+    }
+
     public draw(drawData: DrawData): void {
         this.model.draw(drawData);
     }
@@ -141,11 +141,23 @@ class CanvasImpl implements Canvas {
     public cancel(): void {
         this.model.cancel();
     }
+
+    public configure(configuration: Configuration): void {
+        this.model.configure(configuration);
+    }
+
+    public isAbleToChangeFrame(): boolean {
+        return this.model.isAbleToChangeFrame();
+    }
 }
 
 export {
     CanvasImpl as Canvas,
     CanvasVersion,
+    Configuration,
     RectDrawingMethod,
+    CuboidDrawingMethod,
     Mode as CanvasMode,
+    InteractionData,
+    InteractionResult,
 };

@@ -3,16 +3,13 @@
 // SPDX-License-Identifier: MIT
 
 import React from 'react';
-
-import {
-    Col,
-    Icon,
-    Select,
-    Button,
-} from 'antd';
+import { Col } from 'antd/lib/grid';
+import Icon from 'antd/lib/icon';
+import Select from 'antd/lib/select';
+import Button from 'antd/lib/button';
 
 import { Workspace } from 'reducers/interfaces';
-import { InfoIcon, FullscreenIcon } from '../../../icons';
+import { InfoIcon, FullscreenIcon } from 'icons';
 
 interface Props {
     workspace: Workspace;
@@ -51,18 +48,11 @@ function RightGroup(props: Props): JSX.Element {
                     onChange={changeWorkspace}
                     value={workspace}
                 >
-                    <Select.Option
-                        key={Workspace.STANDARD}
-                        value={Workspace.STANDARD}
-                    >
-                        {Workspace.STANDARD}
-                    </Select.Option>
-                    <Select.Option
-                        key={Workspace.ATTRIBUTE_ANNOTATION}
-                        value={Workspace.ATTRIBUTE_ANNOTATION}
-                    >
-                        {Workspace.ATTRIBUTE_ANNOTATION}
-                    </Select.Option>
+                    {Object.values(Workspace).map((ws) => (
+                        <Select.Option key={ws} value={ws}>
+                            {ws}
+                        </Select.Option>
+                    ))}
                 </Select>
             </div>
         </Col>

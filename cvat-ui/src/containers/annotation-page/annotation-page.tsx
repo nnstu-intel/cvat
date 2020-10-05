@@ -7,7 +7,7 @@ import { withRouter } from 'react-router-dom';
 import { RouteComponentProps } from 'react-router';
 
 import AnnotationPageComponent from 'components/annotation-page/annotation-page';
-import { getJobAsync, saveLogsAsync } from 'actions/annotation-actions';
+import { getJobAsync, saveLogsAsync, closeJob as closeJobAction } from 'actions/annotation-actions';
 
 import { CombinedState, Workspace } from 'reducers/interfaces';
 
@@ -25,6 +25,7 @@ interface StateToProps {
 interface DispatchToProps {
     getJob(): void;
     saveLogs(): void;
+    closeJob(): void;
 }
 
 function mapStateToProps(state: CombinedState, own: OwnProps): StateToProps {
@@ -33,6 +34,7 @@ function mapStateToProps(state: CombinedState, own: OwnProps): StateToProps {
     const {
         annotation: {
             job: {
+                requestedId,
                 instance: job,
                 fetching,
             },
@@ -41,7 +43,7 @@ function mapStateToProps(state: CombinedState, own: OwnProps): StateToProps {
     } = state;
 
     return {
-        job: !job || jobID === job.id ? job : null,
+        job: jobID === requestedId ? job : null,
         fetching,
         workspace,
     };
@@ -63,10 +65,11 @@ function mapDispatchToProps(dispatch: any, own: OwnProps): DispatchToProps {
         }
     }
 
-    if (searchParams.has('object')) {
-        const searchObject = +(searchParams.get('object') as string);
-        if (!Number.isNaN(searchObject)) {
-            initialFilters.push(`serverID==${searchObject}`);
+    if (searchParams.has('serverID') && searchParams.has('type')) {
+        const serverID = searchParams.get('serverID');
+        const type = searchParams.get('type');
+        if (serverID && !Number.isNaN(+serverID)) {
+            initialFilters.push(`serverID==${serverID} & type=="${type}"`);
         }
     }
 
@@ -80,6 +83,9 @@ function mapDispatchToProps(dispatch: any, own: OwnProps): DispatchToProps {
         },
         saveLogs(): void {
             dispatch(saveLogsAsync());
+        },
+        closeJob(): void {
+            dispatch(closeJobAction());
         },
     };
 }

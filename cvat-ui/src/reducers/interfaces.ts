@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { Canvas, RectDrawingMethod } from 'cvat-canvas';
+import { ExtendedKeyMapOptions } from 'react-hotkeys';
+import { Canvas, RectDrawingMethod } from 'cvat-canvas-wrapper';
+import { MutableRefObject } from 'react';
 
 export type StringObject = {
     [index: string]: string;
@@ -12,6 +14,11 @@ export interface AuthState {
     initialized: boolean;
     fetching: boolean;
     user: any;
+    authActionsFetching: boolean;
+    authActionsInitialized: boolean;
+    showChangePasswordDialog: boolean;
+    allowChangePassword: boolean;
+    allowResetPassword: boolean;
 }
 
 export interface TasksQuery {
@@ -34,6 +41,7 @@ export interface Task {
 export interface TasksState {
     initialized: boolean;
     fetching: boolean;
+    updating: boolean;
     hideEmpty: boolean;
     gettingQuery: TasksQuery;
     count: number;
@@ -55,14 +63,15 @@ export interface TasksState {
             [tid: number]: boolean; // deleted (deleting if in dictionary)
         };
         creates: {
+            taskId: number | null;
             status: string;
+            error: string;
         };
     };
 }
 
 export interface FormatsState {
-    annotationFormats: any[];
-    datasetFormats: any[];
+    annotationFormats: any;
     fetching: boolean;
     initialized: boolean;
 }
@@ -70,18 +79,18 @@ export interface FormatsState {
 // eslint-disable-next-line import/prefer-default-export
 export enum SupportedPlugins {
     GIT_INTEGRATION = 'GIT_INTEGRATION',
-    AUTO_ANNOTATION = 'AUTO_ANNOTATION',
-    TF_ANNOTATION = 'TF_ANNOTATION',
-    TF_SEGMENTATION = 'TF_SEGMENTATION',
     ANALYTICS = 'ANALYTICS',
+    MODELS = 'MODELS',
 }
+
+export type PluginsList = {
+    [name in SupportedPlugins]: boolean;
+};
 
 export interface PluginsState {
     fetching: boolean;
     initialized: boolean;
-    list: {
-        [name in SupportedPlugins]: boolean;
-    };
+    list: PluginsList;
 }
 
 export interface UsersState {
@@ -97,6 +106,19 @@ export interface AboutState {
         canvas: string;
         ui: string;
     };
+    fetching: boolean;
+    initialized: boolean;
+}
+
+export interface UserAgreement {
+    name: string;
+    displayText: string;
+    url: string;
+    required: boolean;
+}
+
+export interface UserAgreementsState {
+    list: UserAgreement[];
     fetching: boolean;
     initialized: boolean;
 }
@@ -117,13 +139,15 @@ export interface ShareState {
 }
 
 export interface Model {
-    id: number | null; // null for preinstalled models
-    ownerID: number | null; // null for preinstalled models
+    id: string;
     name: string;
-    primary: boolean;
-    uploadDate: string;
-    updateDate: string;
     labels: string[];
+    framework: string;
+    description: string;
+    type: string;
+    params: {
+        canvas: object;
+    };
 }
 
 export enum RQStatus {
@@ -134,37 +158,26 @@ export enum RQStatus {
     failed = 'failed',
 }
 
-export enum ModelType {
-    OPENVINO = 'openvino',
-    RCNN = 'rcnn',
-    MASK_RCNN = 'mask_rcnn',
-}
-
 export interface ActiveInference {
     status: RQStatus;
     progress: number;
     error: string;
-    modelType: ModelType;
+    id: string;
 }
 
 export interface ModelsState {
     initialized: boolean;
     fetching: boolean;
     creatingStatus: string;
-    models: Model[];
+    interactors: Model[];
+    detectors: Model[];
+    trackers: Model[];
+    reid: Model[];
     inferences: {
         [index: number]: ActiveInference;
     };
     visibleRunWindows: boolean;
     activeRunTask: any;
-}
-
-export interface ModelFiles {
-    [key: string]: string | File;
-    xml: string | File;
-    bin: string | File;
-    py: string | File;
-    json: string | File;
 }
 
 export interface ErrorState {
@@ -179,6 +192,10 @@ export interface NotificationsState {
             login: null | ErrorState;
             logout: null | ErrorState;
             register: null | ErrorState;
+            changePassword: null | ErrorState;
+            requestPasswordReset: null | ErrorState;
+            resetPassword: null | ErrorState;
+            loadAuthActions: null | ErrorState;
         };
         tasks: {
             fetching: null | ErrorState;
@@ -202,9 +219,7 @@ export interface NotificationsState {
             fetching: null | ErrorState;
         };
         models: {
-            creating: null | ErrorState;
             starting: null | ErrorState;
-            deleting: null | ErrorState;
             fetching: null | ErrorState;
             canceling: null | ErrorState;
             metaFetching: null | ErrorState;
@@ -230,10 +245,15 @@ export interface NotificationsState {
             undo: null | ErrorState;
             redo: null | ErrorState;
             search: null | ErrorState;
+            searchEmptyFrame: null | ErrorState;
             savingLogs: null | ErrorState;
         };
-
-        [index: string]: any;
+        boundaries: {
+            resetError: null | ErrorState;
+        };
+        userAgreements: {
+            fetching: null | ErrorState;
+        };
     };
     messages: {
         tasks: {
@@ -242,8 +262,12 @@ export interface NotificationsState {
         models: {
             inferenceDone: string;
         };
-
-        [index: string]: any;
+        auth: {
+            changePasswordDone: string;
+            registerDone: string;
+            requestPasswordResetDone: string;
+            resetPasswordDone: string;
+        };
     };
 }
 
@@ -255,10 +279,12 @@ export enum ActiveControl {
     DRAW_POLYGON = 'draw_polygon',
     DRAW_POLYLINE = 'draw_polyline',
     DRAW_POINTS = 'draw_points',
+    DRAW_CUBOID = 'draw_cuboid',
     MERGE = 'merge',
     GROUP = 'group',
     SPLIT = 'split',
     EDIT = 'edit',
+    AI_TOOLS = 'ai_tools',
 }
 
 export enum ShapeType {
@@ -266,6 +292,7 @@ export enum ShapeType {
     POLYGON = 'polygon',
     POLYLINE = 'polyline',
     POINTS = 'points',
+    CUBOID = 'cuboid',
 }
 
 export enum ObjectType {
@@ -281,8 +308,8 @@ export enum StatesOrdering {
 }
 
 export enum ContextMenuType {
-    CANVAS = 'canvas',
     CANVAS_SHAPE = 'canvas_shape',
+    CANVAS_SHAPE_POINT = 'canvas_shape_point',
 }
 
 export enum Rotation {
@@ -302,6 +329,8 @@ export interface AnnotationState {
             visible: boolean;
             top: number;
             left: number;
+            type: ContextMenuType;
+            pointID: number | null;
         };
         instance: Canvas;
         ready: boolean;
@@ -309,6 +338,7 @@ export interface AnnotationState {
     };
     job: {
         labels: any[];
+        requestedId: number | null;
         instance: any | null | undefined;
         attributes: Record<number, any[]>;
         fetching: boolean;
@@ -317,6 +347,7 @@ export interface AnnotationState {
     player: {
         frame: {
             number: number;
+            filename: string;
             data: any | null;
             fetching: boolean;
             delay: number;
@@ -326,6 +357,7 @@ export interface AnnotationState {
         frameAngles: number[];
     };
     drawing: {
+        activeInteractor?: Model;
         activeShapeType: ShapeType;
         activeRectDrawingMethod?: RectDrawingMethod;
         activeNumOfPoints?: number;
@@ -338,13 +370,14 @@ export interface AnnotationState {
         activatedStateID: number | null;
         activatedAttributeID: number | null;
         collapsed: Record<number, boolean>;
+        collapsedAll: boolean;
         states: any[];
         filters: string[];
         filtersHistory: string[];
         resetGroupFlag: boolean;
         history: {
-            undo: string[];
-            redo: string[];
+            undo: [string, number][];
+            redo: [string, number][];
         };
         saving: {
             uploading: boolean;
@@ -370,11 +403,13 @@ export interface AnnotationState {
     appearanceCollapsed: boolean;
     tabContentHeight: number;
     workspace: Workspace;
+    aiToolsRef: MutableRefObject<any>;
 }
 
 export enum Workspace {
     STANDARD = 'Standard',
     ATTRIBUTE_ANNOTATION = 'Attribute annotation',
+    TAG_ANNOTATION = 'Tag annotation',
 }
 
 export enum GridColor {
@@ -401,6 +436,7 @@ export enum ColorBy {
 }
 
 export interface PlayerSettingsState {
+    canvasBackgroundColor: string;
     frameStep: number;
     frameSpeed: FrameSpeed;
     resetZoom: boolean;
@@ -418,6 +454,8 @@ export interface WorkspaceSettingsState {
     autoSave: boolean;
     autoSaveInterval: number; // in ms
     aamZoomMargin: number;
+    automaticBordering: boolean;
+    showObjectsTextAlways: boolean;
     showAllInterpolationTracks: boolean;
 }
 
@@ -425,17 +463,31 @@ export interface ShapesSettingsState {
     colorBy: ColorBy;
     opacity: number;
     selectedOpacity: number;
-    blackBorders: boolean;
+    outlined: boolean;
+    outlineColor: string;
+    showBitmap: boolean;
+    showProjections: boolean;
 }
 
 export interface SettingsState {
     shapes: ShapesSettingsState;
     workspace: WorkspaceSettingsState;
     player: PlayerSettingsState;
+    showDialog: boolean;
 }
 
 export interface ShortcutsState {
     visibleShortcutsHelp: boolean;
+    keyMap: Record<string, ExtendedKeyMapOptions>;
+    normalizedKeyMap: Record<string, string>;
+}
+
+export interface MetaState {
+    initialized: boolean;
+    fetching: boolean;
+    showTasksButton: boolean;
+    showAnalyticsButton: boolean;
+    showModelsButton: boolean;
 }
 
 export interface CombinedState {
@@ -445,10 +497,12 @@ export interface CombinedState {
     about: AboutState;
     share: ShareState;
     formats: FormatsState;
+    userAgreements: UserAgreementsState;
     plugins: PluginsState;
     models: ModelsState;
     notifications: NotificationsState;
     annotation: AnnotationState;
     settings: SettingsState;
     shortcuts: ShortcutsState;
+    meta: MetaState;
 }

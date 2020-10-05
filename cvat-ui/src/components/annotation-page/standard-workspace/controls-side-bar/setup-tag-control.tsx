@@ -3,12 +3,10 @@
 // SPDX-License-Identifier: MIT
 
 import React from 'react';
-import {
-    Popover,
-    Icon,
-} from 'antd';
+import Popover from 'antd/lib/popover';
+import Icon from 'antd/lib/icon';
 
-import { Canvas } from 'cvat-canvas';
+import { Canvas } from 'cvat-canvas-wrapper';
 import { TagIcon } from 'icons';
 
 import SetupTagPopoverContainer from 'containers/annotation-page/standard-workspace/controls-side-bar/setup-tag-popover';
@@ -19,9 +17,7 @@ interface Props {
 }
 
 function SetupTagControl(props: Props): JSX.Element {
-    const {
-        isDrawing,
-    } = props;
+    const { isDrawing } = props;
 
     const dynamcPopoverPros = isDrawing ? {
         overlayStyle: {
@@ -38,9 +34,7 @@ function SetupTagControl(props: Props): JSX.Element {
                 <SetupTagPopoverContainer />
             )}
         >
-            <Icon
-                component={TagIcon}
-            />
+            <Icon className='cvat-setup-tag-control' component={TagIcon} />
         </Popover>
     );
 }

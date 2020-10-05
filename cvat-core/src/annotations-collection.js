@@ -13,10 +13,12 @@
         PolygonShape,
         PolylineShape,
         PointsShape,
+        CuboidShape,
         RectangleTrack,
         PolygonTrack,
         PolylineTrack,
         PointsTrack,
+        CuboidTrack,
         Track,
         Shape,
         Tag,
@@ -58,6 +60,9 @@
         case 'points':
             shapeModel = new PointsShape(shapeData, clientID, color, injection);
             break;
+        case 'cuboid':
+            shapeModel = new CuboidShape(shapeData, clientID, color, injection);
+            break;
         default:
             throw new DataError(
                 `An unexpected type of shape "${type}"`,
@@ -86,6 +91,9 @@
                 break;
             case 'points':
                 trackModel = new PointsTrack(trackData, clientID, color, injection);
+                break;
+            case 'cuboid':
+                trackModel = new CuboidTrack(trackData, clientID, color, injection);
                 break;
             default:
                 throw new DataError(
@@ -317,7 +325,7 @@
 
                     // Push outside shape after each annotation shape
                     // Any not outside shape rewrites it
-                    if (!((object.frame + 1) in keyframes)) {
+                    if (!((object.frame + 1) in keyframes) && object.frame + 1 <= this.stopFrame) {
                         keyframes[object.frame + 1] = JSON
                             .parse(JSON.stringify(keyframes[object.frame]));
                         keyframes[object.frame + 1].outside = true;
@@ -394,6 +402,7 @@
                 frame: Math.min.apply(null, Object.keys(keyframes).map((frame) => +frame)),
                 shapes: Object.values(keyframes),
                 group: 0,
+                source: objectStates[0].source,
                 label_id: label.id,
                 attributes: Object.keys(objectStates[0].attributes)
                     .reduce((accumulator, attrID) => {
@@ -427,7 +436,10 @@
                 for (const object of objectsForMerge) {
                     object.removed = true;
                 }
-            }, [...objectsForMerge.map((object) => object.clientID), trackModel.clientID]);
+            }, [
+                ...objectsForMerge
+                    .map((object) => object.clientID), trackModel.clientID,
+            ], objectStates[0].frame);
         }
 
         split(objectState, frame) {
@@ -522,7 +534,7 @@
                 object.removed = true;
                 prevTrack.removed = false;
                 nextTrack.removed = false;
-            }, [object.clientID, prevTrack.clientID, nextTrack.clientID]);
+            }, [object.clientID, prevTrack.clientID, nextTrack.clientID], frame);
         }
 
         group(objectStates, reset) {
@@ -554,7 +566,7 @@
                 objectsForGroup.forEach((object, idx) => {
                     object.group = redoGroups[idx];
                 });
-            }, objectsForGroup.map((object) => object.clientID));
+            }, objectsForGroup.map((object) => object.clientID), objectStates[0].frame);
 
             return groupIdx;
         }
@@ -585,6 +597,10 @@
                     track: 0,
                 },
                 points: {
+                    shape: 0,
+                    track: 0,
+                },
+                cuboid: {
                     shape: 0,
                     track: 0,
                 },
@@ -748,6 +764,7 @@
                             points: [...state.points],
                             type: state.shapeType,
                             z_order: state.zOrder,
+                            source: state.source,
                         });
                     } else if (state.objectType === 'track') {
                         constructed.tracks.push({
@@ -755,6 +772,7 @@
                                 .filter((attr) => !labelAttributes[attr.spec_id].mutable),
                             frame: state.frame,
                             group: 0,
+                            source: state.source,
                             label_id: state.label.id,
                             shapes: [{
                                 attributes: attributes
@@ -782,15 +800,19 @@
                 .concat(imported.tracks)
                 .concat(imported.shapes);
 
-            this.history.do(HistoryActions.CREATED_OBJECTS, () => {
-                importedArray.forEach((object) => {
-                    object.removed = true;
-                });
-            }, () => {
-                importedArray.forEach((object) => {
-                    object.removed = false;
-                });
-            }, importedArray.map((object) => object.clientID));
+            if (objectStates.length) {
+                this.history.do(HistoryActions.CREATED_OBJECTS, () => {
+                    importedArray.forEach((object) => {
+                        object.removed = true;
+                    });
+                }, () => {
+                    importedArray.forEach((object) => {
+                        object.removed = false;
+                    });
+                }, importedArray.map((object) => object.clientID), objectStates[0].frame);
+            }
+
+            return importedArray.map((value) => value.clientID);
         }
 
         select(objectStates, x, y) {
@@ -824,6 +846,43 @@
                 state: minimumState,
                 distance: minimumDistance,
             };
+        }
+
+        searchEmpty(frameFrom, frameTo) {
+            const sign = Math.sign(frameTo - frameFrom);
+            const predicate = sign > 0
+                ? (frame) => frame <= frameTo
+                : (frame) => frame >= frameTo;
+            const update = sign > 0
+                ? (frame) => frame + 1
+                : (frame) => frame - 1;
+            for (let frame = frameFrom; predicate(frame); frame = update(frame)) {
+                if (frame in this.shapes && this.shapes[frame].some((shape) => !shape.removed)) {
+                    continue;
+                }
+                if (frame in this.tags && this.tags[frame].some((tag) => !tag.removed)) {
+                    continue;
+                }
+                const filteredTracks = this.tracks.filter((track) => !track.removed);
+                let found = false;
+                for (const track of filteredTracks) {
+                    const keyframes = track.boundedKeyframes(frame);
+                    const { prev, first } = keyframes;
+                    const last = prev === null ? first : prev;
+                    const lastShape = track.shapes[last];
+                    const isKeyfame = frame in track.shapes;
+                    if (first <= frame && (!lastShape.outside || isKeyfame)) {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (found) continue;
+
+                return frame;
+            }
+
+            return null;
         }
 
         search(filters, frameFrom, frameTo) {
@@ -868,8 +927,10 @@
                 // In particular consider first and last frame as keyframes for all frames
                 const statesData = [].concat(
                     (frame in this.shapes ? this.shapes[frame] : [])
+                        .filter((shape) => !shape.removed)
                         .map((shape) => shape.get(frame)),
                     (frame in this.tags ? this.tags[frame] : [])
+                        .filter((tag) => !tag.removed)
                         .map((tag) => tag.get(frame)),
                 );
                 const tracks = Object.values(this.tracks)
@@ -877,7 +938,7 @@
                         frame in track.shapes
                         || frame === frameFrom
                         || frame === frameTo
-                    ));
+                    )).filter((track) => !track.removed);
                 statesData.push(
                     ...tracks.map((track) => track.get(frame))
                         .filter((state) => !state.outside),

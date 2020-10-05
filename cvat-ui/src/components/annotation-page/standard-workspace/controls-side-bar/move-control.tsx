@@ -3,23 +3,12 @@
 // SPDX-License-Identifier: MIT
 
 import React from 'react';
+import Icon from 'antd/lib/icon';
+import Tooltip from 'antd/lib/tooltip';
 
-import {
-    Icon,
-    Tooltip,
-} from 'antd';
-
-import {
-    MoveIcon,
-} from 'icons';
-
-import {
-    ActiveControl,
-} from 'reducers/interfaces';
-
-import {
-    Canvas,
-} from 'cvat-canvas';
+import { MoveIcon } from 'icons';
+import { ActiveControl } from 'reducers/interfaces';
+import { Canvas } from 'cvat-canvas-wrapper';
 
 interface Props {
     canvasInstance: Canvas;
@@ -27,17 +16,14 @@ interface Props {
 }
 
 function MoveControl(props: Props): JSX.Element {
-    const {
-        canvasInstance,
-        activeControl,
-    } = props;
+    const { canvasInstance, activeControl } = props;
 
     return (
-        <Tooltip title='Move the image' placement='right'>
+        <Tooltip title='Move the image' placement='right' mouseLeaveDelay={0}>
             <Icon
                 component={MoveIcon}
                 className={activeControl === ActiveControl.DRAG_CANVAS
-                    ? 'cvat-active-canvas-control' : ''}
+                    ? 'cvat-move-control cvat-active-canvas-control' : 'cvat-move-control'}
                 onClick={(): void => {
                     if (activeControl === ActiveControl.DRAG_CANVAS) {
                         canvasInstance.dragCanvas(false);

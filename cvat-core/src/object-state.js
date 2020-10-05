@@ -3,6 +3,8 @@
 * SPDX-License-Identifier: MIT
 */
 
+const { Source } = require('./enums');
+
 /* global
     require:false
 */
@@ -22,7 +24,7 @@
             * </br> Necessary fields: objectType, shapeType, frame, updated, group
             * </br> Optional fields: keyframes, clientID, serverID
             * </br> Optional fields which can be set later: points, zOrder, outside,
-            * occluded, hidden, attributes, lock, label, color, keyframe
+            * occluded, hidden, attributes, lock, label, color, keyframe, source
         */
         constructor(serialized) {
             const data = {
@@ -39,6 +41,7 @@
                 color: null,
                 hidden: null,
                 pinned: null,
+                source: Source.MANUAL,
                 keyframes: serialized.keyframes,
                 group: serialized.group,
                 updated: serialized.updated,
@@ -108,6 +111,16 @@
                         * @instance
                     */
                     get: () => data.shapeType,
+                },
+                source: {
+                    /**
+                        * @name source
+                        * @type {module:API.cvat.enums.Source}
+                        * @memberof module:API.cvat.classes.ObjectState
+                        * @readonly
+                        * @instance
+                    */
+                    get: () => data.source,
                 },
                 clientID: {
                     /**
@@ -344,6 +357,9 @@
             this.label = serialized.label;
             this.lock = serialized.lock;
 
+            if ([Source.MANUAL, Source.AUTO].includes(serialized.source)) {
+                data.source = serialized.source;
+            }
             if (typeof (serialized.zOrder) === 'number') {
                 this.zOrder = serialized.zOrder;
             }
@@ -398,14 +414,16 @@
             * @memberof module:API.cvat.classes.ObjectState
             * @readonly
             * @instance
+            * @param {integer} frame current frame number
             * @param {boolean} [force=false] delete object even if it is locked
             * @async
             * @returns {boolean} true if object has been deleted
             * @throws {module:API.cvat.exceptions.PluginError}
+            * @throws {module:API.cvat.exceptions.ArgumentError}
         */
-        async delete(force = false) {
+        async delete(frame, force = false) {
             const result = await PluginRegistry
-                .apiWrapper.call(this, ObjectState.prototype.delete, force);
+                .apiWrapper.call(this, ObjectState.prototype.delete, frame, force);
             return result;
         }
     }
@@ -420,9 +438,13 @@
     };
 
     // Delete element from a collection which contains it
-    ObjectState.prototype.delete.implementation = async function (force) {
+    ObjectState.prototype.delete.implementation = async function (frame, force) {
         if (this.__internal && this.__internal.delete) {
-            return this.__internal.delete(force);
+            if (!Number.isInteger(+frame) || +frame < 0) {
+                throw new ArgumentError('Frame argument must be a non negative integer');
+            }
+
+            return this.__internal.delete(frame, force);
         }
 
         return false;

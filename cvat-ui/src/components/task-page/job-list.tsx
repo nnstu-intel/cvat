@@ -3,25 +3,18 @@
 // SPDX-License-Identifier: MIT
 
 import React from 'react';
-
 import { RouteComponentProps } from 'react-router';
 import { withRouter } from 'react-router-dom';
-
-import {
-    Row,
-    Col,
-    Icon,
-    Table,
-    Button,
-    Tooltip,
-} from 'antd';
-
+import { Row, Col } from 'antd/lib/grid';
+import Icon from 'antd/lib/icon';
+import Table from 'antd/lib/table';
+import Button from 'antd/lib/button';
+import Tooltip from 'antd/lib/tooltip';
 import Text from 'antd/lib/typography/Text';
-
 import moment from 'moment';
 import copy from 'copy-to-clipboard';
 
-import getCore from 'cvat-core';
+import getCore from 'cvat-core-wrapper';
 import UserSelector from './user-selector';
 
 const core = getCore();
@@ -51,21 +44,16 @@ function JobListComponent(props: Props & RouteComponentProps): JSX.Element {
         key: 'job',
         render: (id: number): JSX.Element => (
             <div>
-                <Button type='link' href={`${baseURL}/?id=${id}`}>{`Job #${id}`}</Button>
-                |
-                <Tooltip title='Beta version of new UI written in React. It is to get
-                                acquainted only, we do not recommend use it to annotation
-                                process because it lacks of some features and can be unstable.'
+                <Button
+                    type='link'
+                    onClick={(e: React.MouseEvent): void => {
+                        e.preventDefault();
+                        push(`/tasks/${taskId}/jobs/${id}`);
+                    }}
+                    href={`/tasks/${taskId}/jobs/${id}`}
                 >
-                    <Button
-                        type='link'
-                        onClick={(): void => {
-                            push(`/tasks/${taskId}/jobs/${id}`);
-                        }}
-                    >
-                        Try new UI
-                    </Button>
-                </Tooltip>
+                    {`Job #${id}`}
+                </Button>
             </div>
         ),
     }, {
@@ -155,7 +143,7 @@ function JobListComponent(props: Props & RouteComponentProps): JSX.Element {
             <Row type='flex' justify='space-between' align='middle'>
                 <Col>
                     <Text className='cvat-text-color cvat-jobs-header'> Jobs </Text>
-                    <Tooltip trigger='click' title='Copied to clipboard!'>
+                    <Tooltip trigger='click' title='Copied to clipboard!' mouseLeaveDelay={0}>
                         <Button
                             type='link'
                             onClick={(): void => {

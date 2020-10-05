@@ -3,18 +3,13 @@
 // SPDX-License-Identifier: MIT
 
 import React from 'react';
-
-import {
-    Tooltip,
-    Select,
-    Table,
-    Modal,
-    Spin,
-    Icon,
-    Row,
-    Col,
-} from 'antd';
-
+import { Row, Col } from 'antd/lib/grid';
+import Tooltip from 'antd/lib/tooltip';
+import Select from 'antd/lib/select';
+import Table from 'antd/lib/table';
+import Modal from 'antd/lib/modal';
+import Spin from 'antd/lib/spin';
+import Icon from 'antd/lib/icon';
 import Text from 'antd/lib/typography/Text';
 
 interface Props {
@@ -94,7 +89,7 @@ export default function StatisticsModalComponent(props: Props): JSX.Element {
     });
 
     const makeShapesTracksTitle = (title: string): JSX.Element => (
-        <Tooltip title='Shapes / Tracks'>
+        <Tooltip title='Shapes / Tracks' mouseLeaveDelay={0}>
             <Text strong style={{ marginRight: 5 }}>{title}</Text>
             <Icon className='cvat-info-circle-icon' type='question-circle' />
         </Tooltip>

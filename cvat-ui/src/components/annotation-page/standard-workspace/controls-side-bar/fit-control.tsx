@@ -3,32 +3,26 @@
 // SPDX-License-Identifier: MIT
 
 import React from 'react';
+import Icon from 'antd/lib/icon';
+import Tooltip from 'antd/lib/tooltip';
 
-import {
-    Icon,
-    Tooltip,
-} from 'antd';
-
-import {
-    FitIcon,
-} from 'icons';
-
-import {
-    Canvas,
-} from 'cvat-canvas';
+import { FitIcon } from 'icons';
+import { Canvas } from 'cvat-canvas-wrapper';
 
 interface Props {
     canvasInstance: Canvas;
 }
 
 function FitControl(props: Props): JSX.Element {
-    const {
-        canvasInstance,
-    } = props;
+    const { canvasInstance } = props;
 
     return (
-        <Tooltip title='Fit the image' placement='right'>
-            <Icon component={FitIcon} onClick={(): void => canvasInstance.fit()} />
+        <Tooltip title='Fit the image [Double Click]' placement='right' mouseLeaveDelay={0}>
+            <Icon
+                className='cvat-fit-control'
+                component={FitIcon}
+                onClick={(): void => canvasInstance.fit()}
+            />
         </Tooltip>
     );
 }

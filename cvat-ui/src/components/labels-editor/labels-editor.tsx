@@ -4,17 +4,12 @@
 
 import './styles.scss';
 import React from 'react';
-
-import {
-    Tabs,
-    Icon,
-    Button,
-    Tooltip,
-    notification,
-} from 'antd';
-
+import Tabs from 'antd/lib/tabs';
+import Icon from 'antd/lib/icon';
+import Button from 'antd/lib/button';
+import Tooltip from 'antd/lib/tooltip';
+import notification from 'antd/lib/notification';
 import Text from 'antd/lib/typography/Text';
-
 import copy from 'copy-to-clipboard';
 
 import RawViewer from './raw-viewer';
@@ -69,11 +64,12 @@ export default class LabelsEditor
             return {
                 name: label.name,
                 id: label.id || idGenerator(),
+                color: label.color,
                 attributes: label.attributes.map((attr: any): Attribute => (
                     {
                         id: attr.id || idGenerator(),
                         name: attr.name,
-                        type: attr.input_type,
+                        input_type: attr.input_type,
                         mutable: attr.mutable,
                         values: [...attr.values],
                     }
@@ -106,24 +102,15 @@ export default class LabelsEditor
             }
         }
 
-        this.setState({
-            unsavedLabels,
-            savedLabels,
-        });
-
+        this.setState({ unsavedLabels, savedLabels });
         this.handleSubmit(savedLabels, unsavedLabels);
     };
 
     private handleCreate = (label: Label | null): void => {
         if (label === null) {
-            this.setState({
-                constructorMode: ConstructorMode.SHOW,
-            });
+            this.setState({ constructorMode: ConstructorMode.SHOW });
         } else {
-            const {
-                unsavedLabels,
-                savedLabels,
-            } = this.state;
+            const { unsavedLabels, savedLabels } = this.state;
             const newUnsavedLabels = [
                 ...unsavedLabels,
                 {
@@ -132,19 +119,13 @@ export default class LabelsEditor
                 },
             ];
 
-            this.setState({
-                unsavedLabels: newUnsavedLabels,
-            });
-
+            this.setState({ unsavedLabels: newUnsavedLabels });
             this.handleSubmit(savedLabels, newUnsavedLabels);
         }
     };
 
     private handleUpdate = (label: Label | null): void => {
-        const {
-            savedLabels,
-            unsavedLabels,
-        } = this.state;
+        const { savedLabels, unsavedLabels } = this.state;
 
         if (label) {
             const filteredSavedLabels = savedLabels
@@ -167,9 +148,7 @@ export default class LabelsEditor
 
             this.handleSubmit(filteredSavedLabels, filteredUnsavedLabels);
         } else {
-            this.setState({
-                constructorMode: ConstructorMode.SHOW,
-            });
+            this.setState({ constructorMode: ConstructorMode.SHOW });
         }
     };
 
@@ -182,19 +161,13 @@ export default class LabelsEditor
             });
         }
 
-        const {
-            unsavedLabels,
-            savedLabels,
-        } = this.state;
+        const { unsavedLabels, savedLabels } = this.state;
 
         const filteredUnsavedLabels = unsavedLabels.filter(
             (_label: Label): boolean => _label.id !== label.id,
         );
 
-        this.setState({
-            unsavedLabels: filteredUnsavedLabels,
-        });
-
+        this.setState({ unsavedLabels: filteredUnsavedLabels });
         this.handleSubmit(savedLabels, filteredUnsavedLabels);
     };
 
@@ -203,11 +176,12 @@ export default class LabelsEditor
             return {
                 name: label.name,
                 id: label.id < 0 ? undefined : label.id,
+                color: label.color,
                 attributes: label.attributes.map((attr: Attribute): any => (
                     {
                         name: attr.name,
                         id: attr.id < 0 ? undefined : attr.id,
-                        input_type: attr.type.toLowerCase(),
+                        input_type: attr.input_type.toLowerCase(),
                         default_value: attr.values[0],
                         mutable: attr.mutable,
                         values: [...attr.values],
@@ -217,15 +191,14 @@ export default class LabelsEditor
         }
 
         const { onSubmit } = this.props;
-        const output = [];
-        for (const label of savedLabels.concat(unsavedLabels)) {
-            output.push(transformLabel(label));
-        }
+        const output = savedLabels.concat(unsavedLabels)
+            .map((label: Label): any => transformLabel(label));
 
         onSubmit(output);
     }
 
     public render(): JSX.Element {
+        const { labels } = this.props;
         const {
             savedLabels,
             unsavedLabels,
@@ -240,7 +213,7 @@ export default class LabelsEditor
                 tabBarStyle={{ marginBottom: '0px' }}
                 tabBarExtraContent={(
                     <>
-                        <Tooltip title='Copied to clipboard!' trigger='click'>
+                        <Tooltip title='Copied to clipboard!' trigger='click' mouseLeaveDelay={0}>
                             <Button
                                 type='link'
                                 icon='copy'
@@ -324,6 +297,7 @@ export default class LabelsEditor
                         constructorMode === ConstructorMode.CREATE
                             && (
                                 <ConstructorCreator
+                                    labelNames={labels.map((l) => l.name)}
                                     onCreate={this.handleCreate}
                                 />
                             )

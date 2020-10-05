@@ -7,22 +7,29 @@ const MAX_HISTORY_LENGTH = 128;
 
 class AnnotationHistory {
     constructor() {
+        this.frozen = false;
         this.clear();
+    }
+
+    freeze(frozen) {
+        this.frozen = frozen;
     }
 
     get() {
         return {
-            undo: this._undo.map((undo) => undo.action),
-            redo: this._redo.map((redo) => redo.action),
+            undo: this._undo.map((undo) => [undo.action, undo.frame]),
+            redo: this._redo.map((redo) => [redo.action, redo.frame]),
         };
     }
 
-    do(action, undo, redo, clientIDs) {
+    do(action, undo, redo, clientIDs, frame) {
+        if (this.frozen) return;
         const actionItem = {
             clientIDs,
             action,
             undo,
             redo,
+            frame,
         };
 
         this._undo = this._undo.slice(-MAX_HISTORY_LENGTH + 1);

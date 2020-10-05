@@ -3,14 +3,11 @@
 // SPDX-License-Identifier: MIT
 
 import React from 'react';
-
-import {
-    Icon,
-    Tooltip,
-} from 'antd';
-
+import Icon from 'antd/lib/icon';
+import Tooltip from 'antd/lib/tooltip';
 import Text from 'antd/lib/typography/Text';
 
+import consts from 'consts';
 import { Label } from './common';
 
 interface ConstructorViewerItemProps {
@@ -29,9 +26,9 @@ export default function ConstructorViewerItem(props: ConstructorViewerItemProps)
     } = props;
 
     return (
-        <div style={{ background: color }} className='cvat-constructor-viewer-item'>
+        <div style={{ background: color || consts.NEW_LABEL_COLOR }} className='cvat-constructor-viewer-item'>
             <Text>{label.name}</Text>
-            <Tooltip title='Update attributes'>
+            <Tooltip title='Update attributes' mouseLeaveDelay={0}>
                 <span
                     role='button'
                     tabIndex={0}
@@ -43,7 +40,7 @@ export default function ConstructorViewerItem(props: ConstructorViewerItemProps)
             </Tooltip>
             { label.id < 0
                 && (
-                    <Tooltip title='Delete label'>
+                    <Tooltip title='Delete label' mouseLeaveDelay={0}>
                         <span
                             role='button'
                             tabIndex={0}

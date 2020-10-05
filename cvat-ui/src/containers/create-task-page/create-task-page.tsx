@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: MIT
 
-import React from 'react';
 import { connect } from 'react-redux';
 
 import { CombinedState } from 'reducers/interfaces';
@@ -11,7 +10,9 @@ import { CreateTaskData } from 'components/create-task-page/create-task-content'
 import { createTaskAsync } from 'actions/tasks-actions';
 
 interface StateToProps {
+    taskId: number | null;
     status: string;
+    error: string;
     installedGit: boolean;
 }
 
@@ -33,13 +34,7 @@ function mapStateToProps(state: CombinedState): StateToProps {
     };
 }
 
-function CreateTaskPageContainer(props: StateToProps & DispatchToProps): JSX.Element {
-    return (
-        <CreateTaskComponent {...props} />
-    );
-}
-
 export default connect(
     mapStateToProps,
     mapDispatchToProps,
-)(CreateTaskPageContainer);
+)(CreateTaskComponent);

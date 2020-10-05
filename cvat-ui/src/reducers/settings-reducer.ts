@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: MIT
 
 import { AnyAction } from 'redux';
+
+import { BoundariesActionTypes } from 'actions/boundaries-actions';
+import { AuthActionTypes } from 'actions/auth-actions';
 import { SettingsActionTypes } from 'actions/settings-actions';
 import { AnnotationActionTypes } from 'actions/annotation-actions';
 
@@ -15,18 +18,24 @@ import {
 
 const defaultState: SettingsState = {
     shapes: {
-        colorBy: ColorBy.INSTANCE,
+        colorBy: ColorBy.LABEL,
         opacity: 3,
         selectedOpacity: 30,
-        blackBorders: false,
+        outlined: false,
+        outlineColor: '#000000',
+        showBitmap: false,
+        showProjections: false,
     },
     workspace: {
         autoSave: false,
         autoSaveInterval: 15 * 60 * 1000,
         aamZoomMargin: 100,
+        automaticBordering: false,
+        showObjectsTextAlways: false,
         showAllInterpolationTracks: false,
     },
     player: {
+        canvasBackgroundColor: '#ffffff',
         frameStep: 10,
         frameSpeed: FrameSpeed.Usual,
         resetZoom: false,
@@ -39,6 +48,7 @@ const defaultState: SettingsState = {
         contrastLevel: 100,
         saturationLevel: 100,
     },
+    showDialog: false,
 };
 
 export default (state = defaultState, action: AnyAction): SettingsState => {
@@ -115,12 +125,31 @@ export default (state = defaultState, action: AnyAction): SettingsState => {
                 },
             };
         }
-        case SettingsActionTypes.CHANGE_SHAPES_BLACK_BORDERS: {
+        case SettingsActionTypes.CHANGE_SHAPES_OUTLINED_BORDERS: {
             return {
                 ...state,
                 shapes: {
                     ...state.shapes,
-                    blackBorders: action.payload.blackBorders,
+                    outlined: action.payload.outlined,
+                    outlineColor: action.payload.color,
+                },
+            };
+        }
+        case SettingsActionTypes.CHANGE_SHAPES_SHOW_PROJECTIONS: {
+            return {
+                ...state,
+                shapes: {
+                    ...state.shapes,
+                    showProjections: action.payload.showProjections,
+                },
+            };
+        }
+        case SettingsActionTypes.CHANGE_SHOW_UNLABELED_REGIONS: {
+            return {
+                ...state,
+                shapes: {
+                    ...state.shapes,
+                    showBitmap: action.payload.showBitmap,
                 },
             };
         }
@@ -214,16 +243,53 @@ export default (state = defaultState, action: AnyAction): SettingsState => {
                 },
             };
         }
-        case AnnotationActionTypes.GET_JOB_SUCCESS: {
-            const { job } = action.payload;
-
+        case SettingsActionTypes.SWITCH_SHOWING_OBJECTS_TEXT_ALWAYS: {
+            return {
+                ...state,
+                workspace: {
+                    ...state.workspace,
+                    showObjectsTextAlways: action.payload.showObjectsTextAlways,
+                },
+            };
+        }
+        case SettingsActionTypes.SWITCH_AUTOMATIC_BORDERING: {
+            return {
+                ...state,
+                workspace: {
+                    ...state.workspace,
+                    automaticBordering: action.payload.automaticBordering,
+                },
+            };
+        }
+        case SettingsActionTypes.CHANGE_CANVAS_BACKGROUND_COLOR: {
             return {
                 ...state,
                 player: {
                     ...state.player,
+                    canvasBackgroundColor: action.payload.color,
+                },
+            };
+        }
+        case SettingsActionTypes.SWITCH_SETTINGS_DIALOG: {
+            return {
+                ...state,
+                showDialog: typeof action.payload.show === 'undefined' ? !state.showDialog : action.payload.show,
+            };
+        }
+        case BoundariesActionTypes.RESET_AFTER_ERROR:
+        case AnnotationActionTypes.GET_JOB_SUCCESS: {
+            const { job } = action.payload;
+
+            return {
+                ...defaultState,
+                player: {
+                    ...defaultState.player,
                     resetZoom: job && job.task.mode === 'annotation',
                 },
             };
+        }
+        case AuthActionTypes.LOGOUT_SUCCESS: {
+            return { ...defaultState };
         }
         default: {
             return state;

@@ -7,12 +7,18 @@
 */
 
 const PluginRegistry = require('./plugins');
-const server = require('./server-proxy');
+const serverProxy = require('./server-proxy');
 const logFactory = require('./log');
 const { ArgumentError } = require('./exceptions');
 const { LogType } = require('./enums');
 
 const WORKING_TIME_THRESHOLD = 100000; // ms, 1.66 min
+
+function sleep(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
 
 class LoggerStorage {
     constructor() {
@@ -22,6 +28,7 @@ class LoggerStorage {
         this.collection = [];
         this.ignoreRules = {}; // by event
         this.isActiveChecker = null;
+        this.saving = false;
 
         this.ignoreRules[LogType.zoomImage] = {
             lastLog: null,
@@ -128,6 +135,14 @@ LoggerStorage.prototype.log.implementation = function (logType, payload, wait) {
         this.collection.push(log);
     };
 
+    if (log.type === LogType.sendException) {
+        serverProxy.server.exception(log.dump()).catch(() => {
+            pushEvent();
+        });
+
+        return log;
+    }
+
     if (wait) {
         log.onClose(pushEvent);
     } else {
@@ -138,6 +153,10 @@ LoggerStorage.prototype.log.implementation = function (logType, payload, wait) {
 };
 
 LoggerStorage.prototype.save.implementation = async function () {
+    while (this.saving) {
+        await sleep(100);
+    }
+
     const collectionToSend = [...this.collection];
     const lastLog = this.collection[this.collection.length - 1];
 
@@ -156,14 +175,18 @@ LoggerStorage.prototype.save.implementation = async function () {
     const userActivityLog = logFactory(LogType.sendUserActivity, logPayload);
     collectionToSend.push(userActivityLog);
 
-    await server.logs.save(collectionToSend.map((log) => log.dump()));
-
-    for (const rule of Object.values(this.ignoreRules)) {
-        rule.lastLog = null;
+    try {
+        this.saving = true;
+        await serverProxy.logs.save(collectionToSend.map((log) => log.dump()));
+        for (const rule of Object.values(this.ignoreRules)) {
+            rule.lastLog = null;
+        }
+        this.collection = [];
+        this.workingTime = 0;
+        this.lastLogTime = Date.now();
+    } finally {
+        this.saving = false;
     }
-    this.collection = [];
-    this.workingTime = 0;
-    this.lastLogTime = Date.now();
 };
 
 module.exports = new LoggerStorage();

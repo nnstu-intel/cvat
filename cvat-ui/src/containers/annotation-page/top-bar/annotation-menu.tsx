@@ -21,8 +21,7 @@ import {
 } from 'actions/annotation-actions';
 
 interface StateToProps {
-    annotationFormats: any[];
-    exporters: any[];
+    annotationFormats: any;
     jobInstance: any;
     loadActivity: string | null;
     dumpActivities: string[] | null;
@@ -48,7 +47,6 @@ function mapStateToProps(state: CombinedState): StateToProps {
         },
         formats: {
             annotationFormats,
-            datasetFormats: exporters,
         },
         tasks: {
             activities: {
@@ -69,7 +67,6 @@ function mapStateToProps(state: CombinedState): StateToProps {
             ? loads[taskID] || jobLoads[jobID] : null,
         jobInstance,
         annotationFormats,
-        exporters,
     };
 }
 
@@ -95,8 +92,10 @@ type Props = StateToProps & DispatchToProps & RouteComponentProps;
 function AnnotationMenuContainer(props: Props): JSX.Element {
     const {
         jobInstance,
-        annotationFormats,
-        exporters,
+        annotationFormats: {
+            loaders,
+            dumpers,
+        },
         loadAnnotations,
         dumpAnnotations,
         exportDataset,
@@ -106,12 +105,6 @@ function AnnotationMenuContainer(props: Props): JSX.Element {
         dumpActivities,
         exportActivities,
     } = props;
-
-    const loaders = annotationFormats
-        .map((format: any): any[] => format.loaders).flat();
-
-    const dumpers = annotationFormats
-        .map((format: any): any[] => format.dumpers).flat();
 
     const onClickMenu = (params: ClickParam, file?: File): void => {
         if (params.keyPath.length > 1) {
@@ -124,7 +117,7 @@ function AnnotationMenuContainer(props: Props): JSX.Element {
                     dumpAnnotations(jobInstance.task, dumper);
                 }
             } else if (action === Actions.LOAD_JOB_ANNO) {
-                const [format] = additionalKey.split('::');
+                const format = additionalKey;
                 const [loader] = loaders
                     .filter((_loader: any): boolean => _loader.name === format);
                 if (loader && file) {
@@ -132,7 +125,7 @@ function AnnotationMenuContainer(props: Props): JSX.Element {
                 }
             } else if (action === Actions.EXPORT_TASK_DATASET) {
                 const format = additionalKey;
-                const [exporter] = exporters
+                const [exporter] = dumpers
                     .filter((_exporter: any): boolean => _exporter.name === format);
                 if (exporter) {
                     exportDataset(jobInstance.task, exporter);
@@ -151,13 +144,13 @@ function AnnotationMenuContainer(props: Props): JSX.Element {
     return (
         <AnnotationMenuComponent
             taskMode={jobInstance.task.mode}
-            loaders={loaders.map((loader: any): string => loader.name)}
-            dumpers={dumpers.map((dumper: any): string => dumper.name)}
-            exporters={exporters.map((exporter: any): string => exporter.name)}
+            loaders={loaders}
+            dumpers={dumpers}
             loadActivity={loadActivity}
             dumpActivities={dumpActivities}
             exportActivities={exportActivities}
             onClickMenu={onClickMenu}
+            taskID={jobInstance.task.id}
         />
     );
 }

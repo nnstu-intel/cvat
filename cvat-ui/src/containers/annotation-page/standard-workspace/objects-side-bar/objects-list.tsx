@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { connect } from 'react-redux';
-import { GlobalHotKeys, KeyMap } from 'react-hotkeys';
+import { GlobalHotKeys, ExtendedKeyMapOptions } from 'react-hotkeys';
 
 import ObjectsListComponent from 'components/annotation-page/standard-workspace/objects-side-bar/objects-list';
 import {
@@ -14,12 +14,14 @@ import {
     collapseObjectItems,
     copyShape as copyShapeAction,
     propagateObject as propagateObjectAction,
+    changeGroupColorAsync,
 } from 'actions/annotation-actions';
-
+import { Canvas } from 'cvat-canvas-wrapper';
 import {
     CombinedState,
     StatesOrdering,
     ObjectType,
+    ColorBy,
 } from 'reducers/interfaces';
 
 interface StateToProps {
@@ -28,13 +30,19 @@ interface StateToProps {
     listHeight: number;
     statesHidden: boolean;
     statesLocked: boolean;
-    statesCollapsed: boolean;
+    statesCollapsedAll: boolean;
+    collapsedStates: Record<number, boolean>;
     objectStates: any[];
     annotationsFilters: string[];
+    colors: string[];
+    colorBy: ColorBy;
     activatedStateID: number | null;
     minZLayer: number;
     maxZLayer: number;
     annotationsFiltersHistory: string[];
+    keyMap: Record<string, ExtendedKeyMapOptions>;
+    normalizedKeyMap: Record<string, string>;
+    canvasInstance: Canvas;
 }
 
 interface DispatchToProps {
@@ -44,6 +52,7 @@ interface DispatchToProps {
     copyShape: (objectState: any) => void;
     propagateObject: (objectState: any) => void;
     changeFrame(frame: number): void;
+    changeGroupColor(group: number, color: string): void;
 }
 
 function mapStateToProps(state: CombinedState): StateToProps {
@@ -54,6 +63,7 @@ function mapStateToProps(state: CombinedState): StateToProps {
                 filters: annotationsFilters,
                 filtersHistory: annotationsFiltersHistory,
                 collapsed,
+                collapsedAll,
                 activatedStateID,
                 zLayer: {
                     min: minZLayer,
@@ -68,39 +78,55 @@ function mapStateToProps(state: CombinedState): StateToProps {
                     number: frameNumber,
                 },
             },
+            canvas: {
+                instance: canvasInstance,
+            },
             tabContentHeight: listHeight,
+            colors,
+        },
+        settings: {
+            shapes: {
+                colorBy,
+            },
+        },
+        shortcuts: {
+            keyMap,
+            normalizedKeyMap,
         },
     } = state;
 
     let statesHidden = true;
     let statesLocked = true;
-    let statesCollapsed = true;
 
     objectStates.forEach((objectState: any) => {
-        const { clientID, lock } = objectState;
+        const { lock } = objectState;
         if (!lock) {
             if (objectState.objectType !== ObjectType.TAG) {
                 statesHidden = statesHidden && objectState.hidden;
             }
             statesLocked = statesLocked && objectState.lock;
         }
-        const stateCollapsed = clientID in collapsed ? collapsed[clientID] : true;
-        statesCollapsed = statesCollapsed && stateCollapsed;
     });
 
     return {
         listHeight,
         statesHidden,
         statesLocked,
-        statesCollapsed,
+        statesCollapsedAll: collapsedAll,
+        collapsedStates: collapsed,
         objectStates,
         frameNumber,
         jobInstance,
         annotationsFilters,
+        colors,
+        colorBy,
         activatedStateID,
         minZLayer,
         maxZLayer,
         annotationsFiltersHistory,
+        keyMap,
+        normalizedKeyMap,
+        canvasInstance,
     };
 }
 
@@ -123,6 +149,9 @@ function mapDispatchToProps(dispatch: any): DispatchToProps {
         },
         changeFrame(frame: number): void {
             dispatch(changeFrameAsync(frame));
+        },
+        changeGroupColor(group: number, color: string): void {
+            dispatch(changeGroupColorAsync(group, color));
         },
     };
 }
@@ -243,103 +272,40 @@ class ObjectsListContainer extends React.PureComponent<Props, State> {
             objectStates,
             jobInstance,
             updateAnnotations,
+            changeGroupColor,
             removeObject,
             copyShape,
             propagateObject,
             changeFrame,
             maxZLayer,
             minZLayer,
+            keyMap,
+            normalizedKeyMap,
+            canvasInstance,
+            colors,
+            colorBy,
         } = this.props;
         const {
             sortedStatesID,
             statesOrdering,
         } = this.state;
 
-        const keyMap = {
-            SWITCH_ALL_LOCK: {
-                name: 'Lock/unlock all objects',
-                description: 'Change locked state for all objects in the side bar',
-                sequence: 't+l',
-                action: 'keydown',
-            },
-            SWITCH_LOCK: {
-                name: 'Lock/unlock an object',
-                description: 'Change locked state for an active object',
-                sequence: 'l',
-                action: 'keydown',
-            },
-            SWITCH_ALL_HIDDEN: {
-                name: 'Hide/show all objects',
-                description: 'Change hidden state for objects in the side bar',
-                sequence: 't+h',
-                action: 'keydown',
-            },
-            SWITCH_HIDDEN: {
-                name: 'Hide/show an object',
-                description: 'Change hidden state for an active object',
-                sequence: 'h',
-                action: 'keydown',
-            },
-            SWITCH_OCCLUDED: {
-                name: 'Switch occluded',
-                description: 'Change occluded property for an active object',
-                sequences: ['q', '/'],
-                action: 'keydown',
-            },
-            SWITCH_KEYFRAME: {
-                name: 'Switch keyframe',
-                description: 'Change keyframe property for an active track',
-                sequence: 'k',
-                action: 'keydown',
-            },
-            SWITCH_OUTSIDE: {
-                name: 'Switch outside',
-                description: 'Change outside property for an active track',
-                sequence: 'o',
-                action: 'keydown',
-            },
-            DELETE_OBJECT: {
-                name: 'Delete object',
-                description: 'Delete an active object. Use shift to force delete of locked objects',
-                sequences: ['del', 'shift+del'],
-                action: 'keydown',
-            },
-            TO_BACKGROUND: {
-                name: 'To background',
-                description: 'Put an active object "farther" from the user (decrease z axis value)',
-                sequences: ['-', '_'],
-                action: 'keydown',
-            },
-            TO_FOREGROUND: {
-                name: 'To foreground',
-                description: 'Put an active object "closer" to the user (increase z axis value)',
-                sequences: ['+', '='],
-                action: 'keydown',
-            },
-            COPY_SHAPE: {
-                name: 'Copy shape',
-                description: 'Copy shape to CVAT internal clipboard',
-                sequence: 'ctrl+c',
-                action: 'keydown',
-            },
-            PROPAGATE_OBJECT: {
-                name: 'Propagate object',
-                description: 'Make a copy of the object on the following frames',
-                sequence: 'ctrl+b',
-                action: 'keydown',
-            },
-            NEXT_KEY_FRAME: {
-                name: 'Next keyframe',
-                description: 'Go to the next keyframe of an active track',
-                sequence: 'r',
-                action: 'keydown',
-            },
-            PREV_KEY_FRAME: {
-                name: 'Previous keyframe',
-                description: 'Go to the previous keyframe of an active track',
-                sequence: 'e',
-                action: 'keydown',
-            },
+        const subKeyMap = {
+            SWITCH_ALL_LOCK: keyMap.SWITCH_ALL_LOCK,
+            SWITCH_LOCK: keyMap.SWITCH_LOCK,
+            SWITCH_ALL_HIDDEN: keyMap.SWITCH_ALL_HIDDEN,
+            SWITCH_HIDDEN: keyMap.SWITCH_HIDDEN,
+            SWITCH_OCCLUDED: keyMap.SWITCH_OCCLUDED,
+            SWITCH_KEYFRAME: keyMap.SWITCH_KEYFRAME,
+            SWITCH_OUTSIDE: keyMap.SWITCH_OUTSIDE,
+            DELETE_OBJECT: keyMap.DELETE_OBJECT,
+            TO_BACKGROUND: keyMap.TO_BACKGROUND,
+            TO_FOREGROUND: keyMap.TO_FOREGROUND,
+            COPY_SHAPE: keyMap.COPY_SHAPE,
+            PROPAGATE_OBJECT: keyMap.PROPAGATE_OBJECT,
+            NEXT_KEY_FRAME: keyMap.NEXT_KEY_FRAME,
+            PREV_KEY_FRAME: keyMap.PREV_KEY_FRAME,
+            CHANGE_OBJECT_COLOR: keyMap.CHANGE_OBJECT_COLOR,
         };
 
         const preventDefault = (event: KeyboardEvent | undefined): void => {
@@ -417,6 +383,23 @@ class ObjectsListContainer extends React.PureComponent<Props, State> {
                     removeObject(jobInstance, state, event ? event.shiftKey : false);
                 }
             },
+            CHANGE_OBJECT_COLOR: (event: KeyboardEvent | undefined) => {
+                preventDefault(event);
+                const state = activatedStated();
+                if (state) {
+                    if (colorBy === ColorBy.GROUP) {
+                        const colorID = (colors.indexOf(state.group.color) + 1) % colors.length;
+                        changeGroupColor(state.group.id, colors[colorID]);
+                        return;
+                    }
+
+                    if (colorBy === ColorBy.INSTANCE) {
+                        const colorID = (colors.indexOf(state.color) + 1) % colors.length;
+                        state.color = colors[colorID];
+                        updateAnnotations([state]);
+                    }
+                }
+            },
             TO_BACKGROUND: (event: KeyboardEvent | undefined) => {
                 preventDefault(event);
                 const state = activatedStated();
@@ -453,7 +436,7 @@ class ObjectsListContainer extends React.PureComponent<Props, State> {
                 if (state && state.objectType === ObjectType.TRACK) {
                     const frame = typeof (state.keyframes.next) === 'number'
                         ? state.keyframes.next : null;
-                    if (frame !== null) {
+                    if (frame !== null && canvasInstance.isAbleToChangeFrame()) {
                         changeFrame(frame);
                     }
                 }
@@ -464,7 +447,7 @@ class ObjectsListContainer extends React.PureComponent<Props, State> {
                 if (state && state.objectType === ObjectType.TRACK) {
                     const frame = typeof (state.keyframes.prev) === 'number'
                         ? state.keyframes.prev : null;
-                    if (frame !== null) {
+                    if (frame !== null && canvasInstance.isAbleToChangeFrame()) {
                         changeFrame(frame);
                     }
                 }
@@ -473,11 +456,13 @@ class ObjectsListContainer extends React.PureComponent<Props, State> {
 
         return (
             <>
-                <GlobalHotKeys keyMap={keyMap as any as KeyMap} handlers={handlers} allowChanges />
+                <GlobalHotKeys keyMap={subKeyMap} handlers={handlers} allowChanges />
                 <ObjectsListComponent
                     {...this.props}
                     statesOrdering={statesOrdering}
                     sortedStatesID={sortedStatesID}
+                    switchHiddenAllShortcut={normalizedKeyMap.SWITCH_ALL_HIDDEN}
+                    switchLockAllShortcut={normalizedKeyMap.SWITCH_ALL_LOCK}
                     changeStatesOrdering={this.onChangeStatesOrdering}
                     lockAllStates={this.onLockAllStates}
                     unlockAllStates={this.onUnlockAllStates}

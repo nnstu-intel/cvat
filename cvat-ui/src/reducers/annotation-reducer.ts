@@ -2,16 +2,19 @@
 //
 // SPDX-License-Identifier: MIT
 
+import React from 'react';
 import { AnyAction } from 'redux';
 
-import { Canvas, CanvasMode } from 'cvat-canvas';
+import { Canvas, CanvasMode } from 'cvat-canvas-wrapper';
 import { AnnotationActionTypes } from 'actions/annotation-actions';
 import { AuthActionTypes } from 'actions/auth-actions';
+import { BoundariesActionTypes } from 'actions/boundaries-actions';
 import {
     AnnotationState,
     ActiveControl,
     ShapeType,
     ObjectType,
+    ContextMenuType,
     Workspace,
 } from './interfaces';
 
@@ -24,6 +27,8 @@ const defaultState: AnnotationState = {
             visible: false,
             left: 0,
             top: 0,
+            type: ContextMenuType.CANVAS_SHAPE,
+            pointID: null,
         },
         instance: new Canvas(),
         ready: false,
@@ -31,6 +36,7 @@ const defaultState: AnnotationState = {
     },
     job: {
         labels: [],
+        requestedId: null,
         instance: null,
         attributes: {},
         fetching: false,
@@ -39,6 +45,7 @@ const defaultState: AnnotationState = {
     player: {
         frame: {
             number: 0,
+            filename: '',
             data: null,
             fetching: false,
             delay: 0,
@@ -61,6 +68,7 @@ const defaultState: AnnotationState = {
             statuses: [],
         },
         collapsed: {},
+        collapsedAll: true,
         states: [],
         filters: [],
         filtersHistory: JSON.parse(
@@ -86,6 +94,7 @@ const defaultState: AnnotationState = {
         collecting: false,
         data: null,
     },
+    aiToolsRef: React.createRef(),
     colors: [],
     sidebarCollapsed: false,
     appearanceCollapsed: false,
@@ -100,15 +109,19 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                 ...state,
                 job: {
                     ...state.job,
+                    instance: null,
+                    requestedId: action.payload.requestedId,
                     fetching: true,
                 },
             };
         }
+        case BoundariesActionTypes.RESET_AFTER_ERROR:
         case AnnotationActionTypes.GET_JOB_SUCCESS: {
             const {
                 job,
                 states,
                 frameNumber: number,
+                frameFilename: filename,
                 colors,
                 filters,
                 frameData: data,
@@ -143,6 +156,7 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                     ...state.player,
                     frame: {
                         ...state.player.frame,
+                        filename,
                         number,
                         data,
                     },
@@ -152,6 +166,10 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                     ...state.drawing,
                     activeLabelID: job.task.labels[0].id,
                     activeObjectType: job.task.mode === 'interpolation' ? ObjectType.TRACK : ObjectType.SHAPE,
+                },
+                canvas: {
+                    ...state.canvas,
+                    instance: new Canvas(),
                 },
                 colors,
             };
@@ -163,15 +181,6 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                     ...state.job,
                     instance: undefined,
                     fetching: false,
-                },
-            };
-        }
-        case AnnotationActionTypes.CLOSE_JOB: {
-            return {
-                ...defaultState,
-                canvas: {
-                    ...defaultState.canvas,
-                    instance: new Canvas(),
                 },
             };
         }
@@ -195,9 +204,11 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
             const {
                 number,
                 data,
+                filename,
                 states,
                 minZ,
                 maxZ,
+                curZ,
                 delay,
                 changeTime,
             } = action.payload;
@@ -212,6 +223,7 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                     ...state.player,
                     frame: {
                         data,
+                        filename,
                         number,
                         fetching: false,
                         changeTime,
@@ -225,7 +237,7 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                     zLayer: {
                         min: minZ,
                         max: maxZ,
-                        cur: maxZ,
+                        cur: curZ,
                     },
                 },
             };
@@ -267,10 +279,12 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
             };
         }
         case AnnotationActionTypes.SAVE_ANNOTATIONS_SUCCESS: {
+            const { states } = action.payload;
             return {
                 ...state,
                 annotations: {
                     ...state.annotations,
+                    states,
                     saving: {
                         ...state.annotations.saving,
                         uploading: false,
@@ -341,6 +355,7 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
             } = action.payload;
 
             const updatedCollapsedStates = { ...state.annotations.collapsed };
+            const totalStatesCount = state.annotations.states.length;
             for (const objectState of states) {
                 updatedCollapsedStates[objectState.clientID] = collapsed;
             }
@@ -350,6 +365,8 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                 annotations: {
                     ...state.annotations,
                     collapsed: updatedCollapsedStates,
+                    collapsedAll: states.length === totalStatesCount
+                        ? collapsed : state.annotations.collapsedAll,
                 },
             };
         }
@@ -417,6 +434,7 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                     activeControl,
                 },
                 drawing: {
+                    activeInteractor: undefined,
                     activeLabelID: labelID,
                     activeNumOfPoints: points,
                     activeObjectType: objectType,
@@ -616,31 +634,6 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
 
             return {
                 ...state,
-                annotations: {
-                    ...state.annotations,
-                    states,
-                    history,
-                },
-            };
-        }
-        case AnnotationActionTypes.CHANGE_LABEL_COLOR_SUCCESS: {
-            const {
-                label,
-                states,
-                history,
-            } = action.payload;
-
-            const { instance: job } = state.job;
-            const labels = [...job.task.labels];
-            const index = labels.indexOf(label);
-            labels[index] = label;
-
-            return {
-                ...state,
-                job: {
-                    ...state.job,
-                    labels,
-                },
                 annotations: {
                     ...state.annotations,
                     states,
@@ -931,6 +924,8 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                 visible,
                 left,
                 top,
+                type,
+                pointID,
             } = action.payload;
 
             return {
@@ -942,6 +937,8 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                         visible,
                         left,
                         top,
+                        type,
+                        pointID,
                     },
                 },
             };
@@ -1049,8 +1046,30 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                 },
             };
         }
+        case AnnotationActionTypes.INTERACT_WITH_CANVAS: {
+            return {
+                ...state,
+                annotations: {
+                    ...state.annotations,
+                    activatedStateID: null,
+                },
+                drawing: {
+                    ...state.drawing,
+                    activeInteractor: action.payload.activeInteractor,
+                    activeLabelID: action.payload.activeLabelID,
+                },
+                canvas: {
+                    ...state.canvas,
+                    activeControl: ActiveControl.AI_TOOLS,
+                },
+            };
+        }
         case AnnotationActionTypes.CHANGE_WORKSPACE: {
             const { workspace } = action.payload;
+            if (state.canvas.activeControl !== ActiveControl.CURSOR) {
+                return state;
+            }
+
             return {
                 ...state,
                 workspace,
@@ -1065,10 +1084,9 @@ export default (state = defaultState, action: AnyAction): AnnotationState => {
                 },
             };
         }
+        case AnnotationActionTypes.CLOSE_JOB:
         case AuthActionTypes.LOGOUT_SUCCESS: {
-            return {
-                ...defaultState,
-            };
+            return { ...defaultState };
         }
         default: {
             return state;

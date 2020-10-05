@@ -9,25 +9,26 @@ import Checkbox, { CheckboxChangeEvent } from 'antd/lib/checkbox';
 import Select, { SelectValue } from 'antd/lib/select';
 import Radio, { RadioChangeEvent } from 'antd/lib/radio';
 import Input from 'antd/lib/input';
-import InputNumber from 'antd/lib/input-number';
+
+import consts from 'consts';
 
 interface InputElementParameters {
+    clientID: number;
     attrID: number;
     inputType: string;
     values: string[];
     currentValue: string;
     onChange(value: string): void;
-    ref: React.RefObject<Input | InputNumber>;
 }
 
 function renderInputElement(parameters: InputElementParameters): JSX.Element {
     const {
         inputType,
         attrID,
+        clientID,
         values,
         currentValue,
         onChange,
-        ref,
     } = parameters;
 
     const renderCheckbox = (): JSX.Element => (
@@ -56,7 +57,10 @@ function renderInputElement(parameters: InputElementParameters): JSX.Element {
                     )}
                 >
                     {values.map((value: string): JSX.Element => (
-                        <Select.Option key={value} value={value}>{value}</Select.Option>
+                        <Select.Option key={value} value={value}>
+                            {value === consts.UNDEFINED_ATTRIBUTE_VALUE
+                                ? consts.NO_BREAK_SPACE : value}
+                        </Select.Option>
                     ))}
                 </Select>
             </div>
@@ -74,7 +78,10 @@ function renderInputElement(parameters: InputElementParameters): JSX.Element {
                     )}
                 >
                     {values.map((value: string): JSX.Element => (
-                        <Radio style={{ display: 'block' }} key={value} value={value}>{value}</Radio>
+                        <Radio style={{ display: 'block' }} key={value} value={value}>
+                            {value === consts.UNDEFINED_ATTRIBUTE_VALUE
+                                ? consts.NO_BREAK_SPACE : value}
+                        </Radio>
                     ))}
                 </Radio.Group>
             </div>
@@ -98,7 +105,7 @@ function renderInputElement(parameters: InputElementParameters): JSX.Element {
             <div className='attribute-annotation-sidebar-attr-elem-wrapper'>
                 <Input
                     autoFocus
-                    key={attrID}
+                    key={`${clientID}:${attrID}`}
                     defaultValue={currentValue}
                     onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
                         const { value } = event.target;
@@ -114,7 +121,6 @@ function renderInputElement(parameters: InputElementParameters): JSX.Element {
                         }
                     }}
                     onKeyDown={handleKeydown}
-                    ref={ref as React.RefObject<Input>}
                 />
             </div>
         </>
@@ -197,7 +203,9 @@ function renderList(parameters: ListParameters): JSX.Element | null {
             [key: string]: (keyEvent?: KeyboardEvent) => void;
         } = {};
 
-        values.slice(0, 10).forEach((value: string, index: number): void => {
+        const filteredValues = values
+            .filter((value: string): boolean => value !== consts.UNDEFINED_ATTRIBUTE_VALUE);
+        filteredValues.slice(0, 10).forEach((value: string, index: number): void => {
             const key = `SET_${index}_VALUE`;
             keyMap[key] = {
                 name: `Set value "${value}"`,
@@ -218,7 +226,7 @@ function renderList(parameters: ListParameters): JSX.Element | null {
         return (
             <div className='attribute-annotation-sidebar-attr-list-wrapper'>
                 <GlobalHotKeys keyMap={keyMap as KeyMap} handlers={handlers} allowChanges />
-                {values.map((value: string, index: number): JSX.Element => (
+                {filteredValues.map((value: string, index: number): JSX.Element => (
                     <div key={value}>
                         <Text strong>{`${index}:`}</Text>
                         <Text>{` ${value}`}</Text>
@@ -251,24 +259,28 @@ function renderList(parameters: ListParameters): JSX.Element | null {
 }
 
 interface Props {
+    clientID: number;
     attribute: any;
     currentValue: string;
     onChange(value: string): void;
 }
 
 function AttributeEditor(props: Props): JSX.Element {
-    const { attribute, currentValue, onChange } = props;
+    const {
+        attribute,
+        currentValue,
+        onChange,
+        clientID,
+    } = props;
     const { inputType, values, id: attrID } = attribute;
-    const ref = inputType === 'number' ? React.createRef<InputNumber>()
-        : React.createRef<Input>();
 
     return (
         <div>
             {renderList({ values, inputType, onChange })}
             <hr />
             {renderInputElement({
+                clientID,
                 attrID,
-                ref,
                 inputType,
                 currentValue,
                 values,

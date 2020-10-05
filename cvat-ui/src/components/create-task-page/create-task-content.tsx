@@ -3,19 +3,16 @@
 // SPDX-License-Identifier: MIT
 
 import React from 'react';
-
-import {
-    Row,
-    Col,
-    Alert,
-    Button,
-    Collapse,
-    notification,
-} from 'antd';
-
+import { RouteComponentProps } from 'react-router';
+import { withRouter } from 'react-router-dom';
+import { Row, Col } from 'antd/lib/grid';
+import Alert from 'antd/lib/alert';
+import Button from 'antd/lib/button';
+import Collapse from 'antd/lib/collapse';
+import notification from 'antd/lib/notification';
 import Text from 'antd/lib/typography/Text';
 
-import FileManagerContainer from 'containers/file-manager/file-manager';
+import ConnectedFileManager from 'containers/file-manager/file-manager';
 import BasicConfigurationForm, { BaseConfiguration } from './basic-configuration-form';
 import AdvancedConfigurationForm, { AdvancedConfiguration } from './advanced-configuration-form';
 import LabelsEditor from '../labels-editor/labels-editor';
@@ -31,6 +28,7 @@ export interface CreateTaskData {
 interface Props {
     onCreate: (data: CreateTaskData) => void;
     status: string;
+    taskId: number | null;
     installedGit: boolean;
 }
 
@@ -43,6 +41,8 @@ const defaultState = {
     advanced: {
         zOrder: false,
         lfs: false,
+        useZipChunks: true,
+        useCache: true,
     },
     labels: [],
     files: {
@@ -52,22 +52,31 @@ const defaultState = {
     },
 };
 
-export default class CreateTaskContent extends React.PureComponent<Props, State> {
+class CreateTaskContent extends React.PureComponent<Props & RouteComponentProps, State> {
     private basicConfigurationComponent: any;
     private advancedConfigurationComponent: any;
     private fileManagerContainer: any;
 
-    public constructor(props: Props) {
+    public constructor(props: Props & RouteComponentProps) {
         super(props);
         this.state = { ...defaultState };
     }
 
     public componentDidUpdate(prevProps: Props): void {
-        const { status } = this.props;
+        const { status, history, taskId } = this.props;
 
         if (status === 'CREATED' && prevProps.status !== 'CREATED') {
+            const btn = (
+                <Button
+                    onClick={() => history.push(`/tasks/${taskId}`)}
+                >
+                    Open task
+                </Button>
+            );
+
             notification.info({
                 message: 'The task has been created',
+                btn,
             });
 
             this.basicConfigurationComponent.resetFields();
@@ -141,10 +150,10 @@ export default class CreateTaskContent extends React.PureComponent<Props, State>
             }).then((): void => {
                 const { onCreate } = this.props;
                 onCreate(this.state);
-            }).catch((): void => {
+            }).catch((error: Error): void => {
                 notification.error({
                     message: 'Could not create a task',
-                    description: 'Please, check configuration you specified',
+                    description: error.toString(),
                 });
             });
     };
@@ -188,7 +197,7 @@ export default class CreateTaskContent extends React.PureComponent<Props, State>
             <Col span={24}>
                 <Text type='danger'>* </Text>
                 <Text className='cvat-text-color'>Select files:</Text>
-                <FileManagerContainer
+                <ConnectedFileManager
                     ref={
                         (container: any): void => { this.fileManagerContainer = container; }
                     }
@@ -256,3 +265,5 @@ export default class CreateTaskContent extends React.PureComponent<Props, State>
         );
     }
 }
+
+export default withRouter(CreateTaskContent);

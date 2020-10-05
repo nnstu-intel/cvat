@@ -9,7 +9,7 @@ import {
     CombinedState,
 } from 'reducers/interfaces';
 import { getCVATStore } from 'cvat-store';
-import getCore from 'cvat-core';
+import getCore from 'cvat-core-wrapper';
 import { getInferenceStatusAsync } from './models-actions';
 
 const cvat = getCore();
@@ -102,13 +102,7 @@ ThunkAction<Promise<void>, {}, {}, AnyAction> {
         const promises = array
             .map((task): string => (task as any).frames.preview());
 
-        dispatch(
-            getInferenceStatusAsync(
-                array.map(
-                    (task: any): number => task.id,
-                ),
-            ),
-        );
+        dispatch(getInferenceStatusAsync());
 
         for (const promise of promises) {
             try {
@@ -169,7 +163,7 @@ ThunkAction<Promise<void>, {}, {}, AnyAction> {
     return async (dispatch: ActionCreator<Dispatch>): Promise<void> => {
         try {
             dispatch(dumpAnnotation(task, dumper));
-            const url = await task.annotations.dump(task.name, dumper);
+            const url = await task.annotations.dump(dumper);
             const downloadAnchor = (window.document.getElementById('downloadAnchor') as HTMLAnchorElement);
             downloadAnchor.href = url;
             downloadAnchor.click();
@@ -280,7 +274,7 @@ ThunkAction<Promise<void>, {}, {}, AnyAction> {
         dispatch(exportDataset(task, exporter));
 
         try {
-            const url = await task.annotations.exportDataset(exporter.tag);
+            const url = await task.annotations.exportDataset(exporter.name);
             const downloadAnchor = (window.document.getElementById('downloadAnchor') as HTMLAnchorElement);
             downloadAnchor.href = url;
             downloadAnchor.click();
@@ -350,10 +344,12 @@ function createTask(): AnyAction {
     return action;
 }
 
-function createTaskSuccess(): AnyAction {
+function createTaskSuccess(taskId: number): AnyAction {
     const action = {
         type: TasksActionTypes.CREATE_TASK_SUCCESS,
-        payload: {},
+        payload: {
+            taskId,
+        },
     };
 
     return action;
@@ -389,6 +385,8 @@ ThunkAction<Promise<void>, {}, {}, AnyAction> {
             labels: data.labels,
             z_order: data.advanced.zOrder,
             image_quality: 70,
+            use_zip_chunks: data.advanced.useZipChunks,
+            use_cache: data.advanced.useCache,
         };
 
         if (data.advanced.bugTracker) {
@@ -411,6 +409,9 @@ ThunkAction<Promise<void>, {}, {}, AnyAction> {
         }
         if (data.advanced.imageQuality) {
             description.image_quality = data.advanced.imageQuality;
+        }
+        if (data.advanced.dataChunkSize) {
+            description.data_chunk_size = data.advanced.dataChunkSize;
         }
 
         const taskInstance = new cvat.classes.Task(description);
@@ -435,10 +436,10 @@ ThunkAction<Promise<void>, {}, {}, AnyAction> {
 
         dispatch(createTask());
         try {
-            await taskInstance.save((status: string): void => {
+            const savedTask = await taskInstance.save((status: string): void => {
                 dispatch(createTaskUpdateStatus(status));
             });
-            dispatch(createTaskSuccess());
+            dispatch(createTaskSuccess(savedTask.id));
         } catch (error) {
             dispatch(createTaskFailed(error));
         }
@@ -457,9 +458,7 @@ function updateTask(): AnyAction {
 function updateTaskSuccess(task: any): AnyAction {
     const action = {
         type: TasksActionTypes.UPDATE_TASK_SUCCESS,
-        payload: {
-            task,
-        },
+        payload: { task },
     };
 
     return action;
@@ -468,23 +467,28 @@ function updateTaskSuccess(task: any): AnyAction {
 function updateTaskFailed(error: any, task: any): AnyAction {
     const action = {
         type: TasksActionTypes.UPDATE_TASK_FAILED,
-        payload: {
-            error,
-            task,
-        },
+        payload: { error, task },
     };
 
     return action;
 }
 
 export function updateTaskAsync(taskInstance: any):
-ThunkAction<Promise<void>, {}, {}, AnyAction> {
-    return async (dispatch: ActionCreator<Dispatch>): Promise<void> => {
+ThunkAction<Promise<void>, CombinedState, {}, AnyAction> {
+    return async (
+        dispatch: ActionCreator<Dispatch>,
+        getState: () => CombinedState,
+    ): Promise<void> => {
         try {
             dispatch(updateTask());
+            const currentUser = getState().auth.user;
             await taskInstance.save();
-            const [task] = await cvat.tasks.get({ id: taskInstance.id });
-            dispatch(updateTaskSuccess(task));
+            const nextUser = getState().auth.user;
+            const userFetching = getState().auth.fetching;
+            if (!userFetching && nextUser && currentUser.username === nextUser.username) {
+                const [task] = await cvat.tasks.get({ id: taskInstance.id });
+                dispatch(updateTaskSuccess(task));
+            }
         } catch (error) {
             // try abort all changes
             let task = null;

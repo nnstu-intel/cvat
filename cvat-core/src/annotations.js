@@ -17,7 +17,7 @@
     const {
         Loader,
         Dumper,
-    } = require('./annotation-format.js');
+    } = require('./annotation-formats.js');
     const {
         ScriptingError,
         DataError,
@@ -77,6 +77,15 @@
         }
     }
 
+    async function closeSession(session) {
+        const sessionType = session instanceof Task ? 'task' : 'job';
+        const cache = getCache(sessionType);
+
+        if (cache.has(session)) {
+            cache.delete(session);
+        }
+    }
+
     async function getAnnotations(session, frame, allTracks, filters) {
         const sessionType = session instanceof Task ? 'task' : 'job';
         const cache = getCache(sessionType);
@@ -106,6 +115,19 @@
 
         if (cache.has(session)) {
             return cache.get(session).collection.search(filters, frameFrom, frameTo);
+        }
+
+        throw new DataError(
+            'Collection has not been initialized yet. Call annotations.get() or annotations.clear(true) before',
+        );
+    }
+
+    function searchEmptyFrame(session, frameFrom, frameTo) {
+        const sessionType = session instanceof Task ? 'task' : 'job';
+        const cache = getCache(sessionType);
+
+        if (cache.has(session)) {
+            return cache.get(session).collection.searchEmpty(frameFrom, frameTo);
         }
 
         throw new DataError(
@@ -247,6 +269,32 @@
         return result;
     }
 
+    function importAnnotations(session, data) {
+        const sessionType = session instanceof Task ? 'task' : 'job';
+        const cache = getCache(sessionType);
+
+        if (cache.has(session)) {
+            return cache.get(session).collection.import(data);
+        }
+
+        throw new DataError(
+            'Collection has not been initialized yet. Call annotations.get() or annotations.clear(true) before',
+        );
+    }
+
+    function exportAnnotations(session) {
+        const sessionType = session instanceof Task ? 'task' : 'job';
+        const cache = getCache(sessionType);
+
+        if (cache.has(session)) {
+            return cache.get(session).collection.export();
+        }
+
+        throw new DataError(
+            'Collection has not been initialized yet. Call annotations.get() or annotations.clear(true) before',
+        );
+    }
+
     async function exportDataset(session, format) {
         if (!(format instanceof String || typeof format === 'string')) {
             throw new ArgumentError(
@@ -292,6 +340,19 @@
         );
     }
 
+    function freezeHistory(session, frozen) {
+        const sessionType = session instanceof Task ? 'task' : 'job';
+        const cache = getCache(sessionType);
+
+        if (cache.has(session)) {
+            return cache.get(session).history.freeze(frozen);
+        }
+
+        throw new DataError(
+            'Collection has not been initialized yet. Call annotations.get() or annotations.clear(true) before',
+        );
+    }
+
     function clearActions(session) {
         const sessionType = session instanceof Task ? 'task' : 'job';
         const cache = getCache(sessionType);
@@ -325,6 +386,7 @@
         hasUnsavedChanges,
         mergeAnnotations,
         searchAnnotations,
+        searchEmptyFrame,
         splitAnnotations,
         groupAnnotations,
         clearAnnotations,
@@ -332,10 +394,14 @@
         selectObject,
         uploadAnnotations,
         dumpAnnotations,
+        importAnnotations,
+        exportAnnotations,
         exportDataset,
         undoActions,
         redoActions,
+        freezeHistory,
         clearActions,
         getActions,
+        closeSession,
     };
 })();

@@ -3,15 +3,21 @@
 // SPDX-License-Identifier: MIT
 
 import React from 'react';
-import { FormComponentProps } from 'antd/lib/form/Form';
-import {
-    Button,
-    Icon,
-    Input,
-    Form,
-} from 'antd';
+import Form, { FormComponentProps } from 'antd/lib/form/Form';
+import Button from 'antd/lib/button';
+import Icon from 'antd/lib/icon';
+import Input from 'antd/lib/input';
+import Checkbox from 'antd/lib/checkbox';
 
 import patterns from 'utils/validation-patterns';
+
+import { UserAgreement } from 'reducers/interfaces';
+import { Row, Col } from 'antd/lib/grid';
+
+export interface UserConfirmation {
+    name: string;
+    value: boolean;
+}
 
 export interface RegisterData {
     username: string;
@@ -20,10 +26,12 @@ export interface RegisterData {
     email: string;
     password1: string;
     password2: string;
+    confirmations: UserConfirmation[];
 }
 
 type RegisterFormProps = {
     fetching: boolean;
+    userAgreements: UserAgreement[];
     onSubmit(registerData: RegisterData): void;
 } & FormComponentProps;
 
@@ -73,16 +81,46 @@ class RegisterFormComponent extends React.PureComponent<RegisterFormProps> {
         callback();
     };
 
+    private validateAgrement = (agreement: any, value: any, callback: any): void => {
+        const { userAgreements } = this.props;
+        let isValid = true;
+        for (const userAgreement of userAgreements) {
+            if (agreement.field === userAgreement.name
+                && userAgreement.required && !value) {
+                isValid = false;
+                callback(`You must accept the ${userAgreement.displayText} to continue!`);
+                break;
+            }
+        }
+        if (isValid) {
+            callback();
+        }
+    };
+
     private handleSubmit = (e: React.FormEvent): void => {
         e.preventDefault();
         const {
             form,
             onSubmit,
+            userAgreements,
         } = this.props;
 
         form.validateFields((error, values): void => {
             if (!error) {
-                onSubmit(values);
+                const validatedFields = {
+                    ...values,
+                    confirmations: [],
+                };
+
+                for (const userAgreement of userAgreements) {
+                    validatedFields.confirmations.push({
+                        name: userAgreement.name,
+                        value: validatedFields[userAgreement.name],
+                    });
+                    delete validatedFields[userAgreement.name];
+                }
+
+                onSubmit(validatedFields);
             }
         });
     };
@@ -100,7 +138,7 @@ class RegisterFormComponent extends React.PureComponent<RegisterFormProps> {
                     }],
                 })(
                     <Input
-                        prefix={<Icon type='user-add' style={{ color: 'rgba(0,0,0,.25)' }} />}
+                        prefix={<Icon type='user-add' style={{ color: 'rgba(0, 0, 0, 0.25)' }} />}
                         placeholder='First name'
                     />,
                 )}
@@ -121,7 +159,7 @@ class RegisterFormComponent extends React.PureComponent<RegisterFormProps> {
                     }],
                 })(
                     <Input
-                        prefix={<Icon type='user-add' style={{ color: 'rgba(0,0,0,.25)' }} />}
+                        prefix={<Icon type='user-add' style={{ color: 'rgba(0, 0, 0, 0.25)' }} />}
                         placeholder='Last name'
                     />,
                 )}
@@ -143,7 +181,7 @@ class RegisterFormComponent extends React.PureComponent<RegisterFormProps> {
                     }],
                 })(
                     <Input
-                        prefix={<Icon type='user-add' style={{ color: 'rgba(0,0,0,.25)' }} />}
+                        prefix={<Icon type='user-add' style={{ color: 'rgba(0, 0, 0, 0.25)' }} />}
                         placeholder='Username'
                     />,
                 )}
@@ -167,7 +205,7 @@ class RegisterFormComponent extends React.PureComponent<RegisterFormProps> {
                 })(
                     <Input
                         autoComplete='email'
-                        prefix={<Icon type='mail' style={{ color: 'rgba(0,0,0,.25)' }} />}
+                        prefix={<Icon type='mail' style={{ color: 'rgba(0, 0, 0, 0.25)' }} />}
                         placeholder='Email address'
                     />,
                 )}
@@ -189,7 +227,7 @@ class RegisterFormComponent extends React.PureComponent<RegisterFormProps> {
                     }],
                 })(<Input.Password
                     autoComplete='new-password'
-                    prefix={<Icon type='lock' style={{ color: 'rgba(0,0,0,.25)' }} />}
+                    prefix={<Icon type='lock' style={{ color: 'rgba(0, 0, 0, 0.25)' }} />}
                     placeholder='Password'
                 />)}
             </Form.Item>
@@ -210,11 +248,48 @@ class RegisterFormComponent extends React.PureComponent<RegisterFormProps> {
                     }],
                 })(<Input.Password
                     autoComplete='new-password'
-                    prefix={<Icon type='lock' style={{ color: 'rgba(0,0,0,.25)' }} />}
+                    prefix={<Icon type='lock' style={{ color: 'rgba(0, 0, 0, 0.25)' }} />}
                     placeholder='Confirm password'
                 />)}
             </Form.Item>
         );
+    }
+
+    private renderUserAgreements(): JSX.Element[] {
+        const { form, userAgreements } = this.props;
+        const getUserAgreementsElements = (): JSX.Element[] => {
+            const agreementsList: JSX.Element[] = [];
+            for (const userAgreement of userAgreements) {
+                agreementsList.push(
+                    <Form.Item key={userAgreement.name}>
+                        {form.getFieldDecorator(userAgreement.name, {
+                            initialValue: false,
+                            valuePropName: 'checked',
+                            rules: [{
+                                required: true,
+                                message: 'You must accept to continue!',
+                            }, {
+                                validator: this.validateAgrement,
+                            }],
+                        })(
+                            <Checkbox>
+                                I read and accept the
+                                <a
+                                    rel='noopener noreferrer'
+                                    target='_blank'
+                                    href={userAgreement.url}
+                                >
+                                    {` ${userAgreement.displayText}`}
+                                </a>
+                            </Checkbox>,
+                        )}
+                    </Form.Item>,
+                );
+            }
+            return agreementsList;
+        };
+
+        return getUserAgreementsElements();
     }
 
     public render(): JSX.Element {
@@ -222,12 +297,19 @@ class RegisterFormComponent extends React.PureComponent<RegisterFormProps> {
 
         return (
             <Form onSubmit={this.handleSubmit} className='login-form'>
-                {this.renderFirstNameField()}
-                {this.renderLastNameField()}
+                <Row gutter={8}>
+                    <Col span={12}>
+                        {this.renderFirstNameField()}
+                    </Col>
+                    <Col span={12}>
+                        {this.renderLastNameField()}
+                    </Col>
+                </Row>
                 {this.renderUsernameField()}
                 {this.renderEmailField()}
                 {this.renderPasswordField()}
                 {this.renderPasswordConfirmationField()}
+                {this.renderUserAgreements()}
 
                 <Form.Item>
                     <Button

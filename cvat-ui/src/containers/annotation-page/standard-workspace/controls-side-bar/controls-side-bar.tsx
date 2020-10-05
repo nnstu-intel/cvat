@@ -2,30 +2,29 @@
 //
 // SPDX-License-Identifier: MIT
 
+import { ExtendedKeyMapOptions } from 'react-hotkeys';
 import { connect } from 'react-redux';
 
-import { Canvas } from 'cvat-canvas';
-
+import { Canvas } from 'cvat-canvas-wrapper';
 import {
     mergeObjects,
     groupObjects,
     splitTrack,
+    redrawShapeAsync,
     rotateCurrentFrame,
     repeatDrawShapeAsync,
     pasteShapeAsync,
     resetAnnotationsGroup,
 } from 'actions/annotation-actions';
 import ControlsSideBarComponent from 'components/annotation-page/standard-workspace/controls-side-bar/controls-side-bar';
-import {
-    ActiveControl,
-    CombinedState,
-    Rotation,
-} from 'reducers/interfaces';
+import { ActiveControl, CombinedState, Rotation } from 'reducers/interfaces';
 
 interface StateToProps {
     canvasInstance: Canvas;
     rotateAll: boolean;
     activeControl: ActiveControl;
+    keyMap: Record<string, ExtendedKeyMapOptions>;
+    normalizedKeyMap: Record<string, string>;
 }
 
 interface DispatchToProps {
@@ -36,6 +35,7 @@ interface DispatchToProps {
     resetGroup(): void;
     repeatDrawShape(): void;
     pasteShape(): void;
+    redrawShape(): void;
 }
 
 function mapStateToProps(state: CombinedState): StateToProps {
@@ -51,12 +51,18 @@ function mapStateToProps(state: CombinedState): StateToProps {
                 rotateAll,
             },
         },
+        shortcuts: {
+            keyMap,
+            normalizedKeyMap,
+        },
     } = state;
 
     return {
         rotateAll,
         canvasInstance,
         activeControl,
+        normalizedKeyMap,
+        keyMap,
     };
 }
 
@@ -82,6 +88,9 @@ function dispatchToProps(dispatch: any): DispatchToProps {
         },
         resetGroup(): void {
             dispatch(resetAnnotationsGroup());
+        },
+        redrawShape(): void {
+            dispatch(redrawShapeAsync());
         },
     };
 }

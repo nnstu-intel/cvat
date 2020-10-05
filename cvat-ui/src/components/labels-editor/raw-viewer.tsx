@@ -3,21 +3,17 @@
 // SPDX-License-Identifier: MIT
 
 import React from 'react';
-
-import {
-    Row,
-    Col,
-    Form,
-    Input,
-    Button,
-    Tooltip,
-} from 'antd';
-
-import { FormComponentProps } from 'antd/lib/form/Form';
+import { Row, Col } from 'antd/lib/grid';
+import Input from 'antd/lib/input';
+import Button from 'antd/lib/button';
+import Tooltip from 'antd/lib/tooltip';
+import Form, { FormComponentProps } from 'antd/lib/form/Form';
 
 import {
     Label,
     Attribute,
+    validateParsedLabel,
+    idGenerator,
 } from './common';
 
 type Props = FormComponentProps & {
@@ -28,7 +24,22 @@ type Props = FormComponentProps & {
 class RawViewer extends React.PureComponent<Props> {
     private validateLabels = (_: any, value: string, callback: any): void => {
         try {
-            JSON.parse(value);
+            const parsed = JSON.parse(value);
+            if (!Array.isArray(parsed)) {
+                callback('Field is expected to be a JSON array');
+            }
+            const labelNames = parsed.map((label: Label) => label.name);
+            if (new Set(labelNames).size !== labelNames.length) {
+                callback('Label names must be unique for the task');
+            }
+
+            for (const label of parsed) {
+                try {
+                    validateParsedLabel(label);
+                } catch (error) {
+                    callback(error.toString());
+                }
+            }
         } catch (error) {
             callback(error.toString());
         }
@@ -37,15 +48,19 @@ class RawViewer extends React.PureComponent<Props> {
     };
 
     private handleSubmit = (e: React.FormEvent): void => {
-        const {
-            form,
-            onSubmit,
-        } = this.props;
+        const { form, onSubmit } = this.props;
 
         e.preventDefault();
         form.validateFields((error, values): void => {
             if (!error) {
-                onSubmit(JSON.parse(values.labels));
+                const parsed = JSON.parse(values.labels);
+                for (const label of parsed) {
+                    label.id = label.id || idGenerator();
+                    for (const attr of label.attributes) {
+                        attr.id = attr.id || idGenerator();
+                    }
+                }
+                onSubmit(parsed);
             }
         });
     };
@@ -80,7 +95,7 @@ class RawViewer extends React.PureComponent<Props> {
                 </Form.Item>
                 <Row type='flex' justify='start' align='middle'>
                     <Col>
-                        <Tooltip title='Save labels and return'>
+                        <Tooltip title='Save labels and return' mouseLeaveDelay={0}>
                             <Button
                                 style={{ width: '150px' }}
                                 type='primary'
@@ -91,7 +106,7 @@ class RawViewer extends React.PureComponent<Props> {
                         </Tooltip>
                     </Col>
                     <Col offset={1}>
-                        <Tooltip title='Do not save the label and return'>
+                        <Tooltip title='Do not save the label and return' mouseLeaveDelay={0}>
                             <Button
                                 style={{ width: '150px' }}
                                 type='danger'
