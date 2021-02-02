@@ -4,7 +4,7 @@
 
 import React from 'react';
 import Tooltip from 'antd/lib/tooltip';
-import Icon from 'antd/lib/icon';
+import Icon from '@ant-design/icons';
 
 import { GroupIcon } from 'icons';
 import { Canvas } from 'cvat-canvas-wrapper';
@@ -19,16 +19,10 @@ interface Props {
 }
 
 function GroupControl(props: Props): JSX.Element {
-    const {
-        switchGroupShortcut,
-        resetGroupShortcut,
-        activeControl,
-        canvasInstance,
-        groupObjects,
-    } = props;
+    const { switchGroupShortcut, resetGroupShortcut, activeControl, canvasInstance, groupObjects } = props;
 
-    const dynamicIconProps = activeControl === ActiveControl.GROUP
-        ? {
+    const dynamicIconProps =
+        activeControl === ActiveControl.GROUP ? {
             className: 'cvat-group-control cvat-active-canvas-control',
             onClick: (): void => {
                 canvasInstance.group({ enabled: false });
@@ -43,8 +37,8 @@ function GroupControl(props: Props): JSX.Element {
             },
         };
 
-    const title = `Group shapes/tracks ${switchGroupShortcut}.`
-        + ` Select and press ${resetGroupShortcut} to reset a group`;
+    const title =
+        `Group shapes/tracks ${switchGroupShortcut}.` + ` Select and press ${resetGroupShortcut} to reset a group`;
     return (
         <Tooltip title={title} placement='right' mouseLeaveDelay={0}>
             <Icon {...dynamicIconProps} component={GroupIcon} />

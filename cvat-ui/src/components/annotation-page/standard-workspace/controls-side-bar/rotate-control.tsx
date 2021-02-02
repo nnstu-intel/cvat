@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: MIT
 
 import React from 'react';
-import Icon from 'antd/lib/icon';
+import Icon from '@ant-design/icons';
 import Tooltip from 'antd/lib/tooltip';
 import Popover from 'antd/lib/popover';
 
 import { RotateIcon } from 'icons';
 import { Rotation } from 'reducers/interfaces';
+
+import withVisibilityHandling from './handle-popover-visibility';
 
 interface Props {
     clockwiseShortcut: string;
@@ -18,21 +20,29 @@ interface Props {
 
 function RotateControl(props: Props): JSX.Element {
     const { anticlockwiseShortcut, clockwiseShortcut, rotateFrame } = props;
+    const CustomPopover = withVisibilityHandling(Popover, 'rotate-canvas');
 
     return (
-        <Popover
-            overlayClassName='cvat-rotate-canvas-controls'
+        <CustomPopover
             placement='right'
             content={(
                 <>
-                    <Tooltip title={`Rotate the image anticlockwise ${anticlockwiseShortcut}`} placement='topRight' mouseLeaveDelay={0}>
+                    <Tooltip
+                        title={`Rotate the image anticlockwise ${anticlockwiseShortcut}`}
+                        placement='topRight'
+                        mouseLeaveDelay={0}
+                    >
                         <Icon
                             className='cvat-rotate-canvas-controls-left'
                             onClick={(): void => rotateFrame(Rotation.ANTICLOCKWISE90)}
                             component={RotateIcon}
                         />
                     </Tooltip>
-                    <Tooltip title={`Rotate the image clockwise ${clockwiseShortcut}`} placement='topRight' mouseLeaveDelay={0}>
+                    <Tooltip
+                        title={`Rotate the image clockwise ${clockwiseShortcut}`}
+                        placement='topRight'
+                        mouseLeaveDelay={0}
+                    >
                         <Icon
                             className='cvat-rotate-canvas-controls-right'
                             onClick={(): void => rotateFrame(Rotation.CLOCKWISE90)}
@@ -44,7 +54,7 @@ function RotateControl(props: Props): JSX.Element {
             trigger='hover'
         >
             <Icon className='cvat-rotate-canvas-control' component={RotateIcon} />
-        </Popover>
+        </CustomPopover>
     );
 }
 

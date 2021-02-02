@@ -16,6 +16,8 @@ from enum import Enum
 from glob import glob
 from io import BytesIO
 from unittest import mock
+import open3d as o3d
+import struct
 
 import av
 import numpy as np
@@ -29,8 +31,10 @@ from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
 from cvat.apps.engine.models import (AttributeType, Data, Job, Project,
-    Segment, StatusChoice, Task, StorageMethodChoice)
+    Segment, StatusChoice, Task, Label, StorageMethodChoice, StorageChoice)
 from cvat.apps.engine.prepare import prepare_meta, prepare_meta_for_upload
+from cvat.apps.engine.media_extractors import ValidateDimension
+from cvat.apps.engine.models import DimensionType
 
 def create_db_users(cls):
     (group_admin, _) = Group.objects.get_or_create(name="admin")
@@ -103,7 +107,6 @@ def create_dummy_db_tasks(obj, project=None):
         "assignee": obj.assignee,
         "overlap": 0,
         "segment_size": 100,
-        "z_order": False,
         "image_quality": 75,
         "size": 100,
         "project": project
@@ -116,7 +119,6 @@ def create_dummy_db_tasks(obj, project=None):
         "owner": obj.user,
         "overlap": 0,
         "segment_size": 100,
-        "z_order": True,
         "image_quality": 50,
         "size": 200,
         "project": project
@@ -130,7 +132,6 @@ def create_dummy_db_tasks(obj, project=None):
         "assignee": obj.assignee,
         "overlap": 0,
         "segment_size": 100,
-        "z_order": False,
         "image_quality": 75,
         "size": 100,
         "project": project
@@ -143,7 +144,6 @@ def create_dummy_db_tasks(obj, project=None):
         "owner": obj.admin,
         "overlap": 0,
         "segment_size": 50,
-        "z_order": False,
         "image_quality": 95,
         "size": 50,
         "project": project
@@ -301,47 +301,47 @@ class JobUpdateAPITestCase(APITestCase):
         self.assertEqual(response.data["id"], self.job.id)
         self.assertEqual(response.data["status"], data.get('status', self.job.status))
         assignee = self.job.assignee.id if self.job.assignee else None
-        self.assertEqual(response.data["assignee"], data.get('assignee', assignee))
+        self.assertEqual(response.data["assignee"]["id"], data.get('assignee_id', assignee))
         self.assertEqual(response.data["start_frame"], self.job.segment.start_frame)
         self.assertEqual(response.data["stop_frame"], self.job.segment.stop_frame)
 
     def test_api_v1_jobs_id_admin(self):
-        data = {"status": StatusChoice.COMPLETED, "assignee": self.owner.id}
+        data = {"status": StatusChoice.COMPLETED, "assignee_id": self.owner.id}
         response = self._run_api_v1_jobs_id(self.job.id, self.admin, data)
         self._check_request(response, data)
         response = self._run_api_v1_jobs_id(self.job.id + 10, self.admin, data)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_api_v1_jobs_id_owner(self):
-        data = {"status": StatusChoice.VALIDATION, "assignee": self.annotator.id}
+        data = {"status": StatusChoice.VALIDATION, "assignee_id": self.annotator.id}
         response = self._run_api_v1_jobs_id(self.job.id, self.owner, data)
         self._check_request(response, data)
         response = self._run_api_v1_jobs_id(self.job.id + 10, self.owner, data)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_api_v1_jobs_id_annotator(self):
-        data = {"status": StatusChoice.ANNOTATION, "assignee": self.user.id}
+        data = {"status": StatusChoice.ANNOTATION, "assignee_id": self.user.id}
         response = self._run_api_v1_jobs_id(self.job.id, self.annotator, data)
         self._check_request(response, data)
         response = self._run_api_v1_jobs_id(self.job.id + 10, self.annotator, data)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_api_v1_jobs_id_observer(self):
-        data = {"status": StatusChoice.ANNOTATION, "assignee": self.admin.id}
+        data = {"status": StatusChoice.ANNOTATION, "assignee_id": self.admin.id}
         response = self._run_api_v1_jobs_id(self.job.id, self.observer, data)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         response = self._run_api_v1_jobs_id(self.job.id + 10, self.observer, data)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_api_v1_jobs_id_user(self):
-        data = {"status": StatusChoice.ANNOTATION, "assignee": self.user.id}
+        data = {"status": StatusChoice.ANNOTATION, "assignee_id": self.user.id}
         response = self._run_api_v1_jobs_id(self.job.id, self.user, data)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         response = self._run_api_v1_jobs_id(self.job.id + 10, self.user, data)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_api_v1_jobs_id_no_auth(self):
-        data = {"status": StatusChoice.ANNOTATION, "assignee": self.user.id}
+        data = {"status": StatusChoice.ANNOTATION, "assignee_id": self.user.id}
         response = self._run_api_v1_jobs_id(self.job.id, None, data)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
         response = self._run_api_v1_jobs_id(self.job.id + 10, None, data)
@@ -360,9 +360,230 @@ class JobPartialUpdateAPITestCase(JobUpdateAPITestCase):
         self._check_request(response, data)
 
     def test_api_v1_jobs_id_admin_partial(self):
-        data = {"assignee": self.user.id}
+        data = {"assignee_id": self.user.id}
         response = self._run_api_v1_jobs_id(self.job.id, self.owner, data)
         self._check_request(response, data)
+
+class JobReview(APITestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    @classmethod
+    def setUpTestData(cls):
+        create_db_users(cls)
+        cls.task = create_dummy_db_tasks(cls)[0]
+        cls.job = Job.objects.filter(segment__task_id=cls.task.id).first()
+        cls.reviewer = cls.annotator
+        cls.job.reviewer = cls.reviewer
+        cls.job.assignee = cls.assignee
+        cls.job.save()
+        cls.reject_review_data = {
+            "job": cls.job.id,
+            "issue_set": [
+                {
+                "position": [
+                    50, 50, 100, 100
+                ],
+                "comment_set": [
+                    {
+                    "message": "This is wrong!"
+                    }, {
+                    "message": "This is wrong 2!"
+                    }
+                ],
+                "frame": 0
+                }
+            ],
+            "estimated_quality": 3,
+            "status": "rejected"
+        }
+
+        cls.accept_review_data = {
+            "job": cls.job.id,
+            "issue_set": [],
+            "estimated_quality": 5,
+            "status": "accepted"
+        }
+
+        cls.review_further_data = {
+            "job": cls.job.id,
+            "issue_set": [],
+            "estimated_quality": 4,
+            "status": "review_further",
+            "reviewer_id": cls.reviewer.id
+        }
+
+        cls.create_comment_data = [{
+            "message": "This is testing message"
+        }, {
+            "message": "This is testing message 2"
+        }, {
+            "message": "This is testing message 3"
+        }]
+
+    def _post_request(self, path, user, data):
+        with ForceLogin(user, self.client):
+            response = self.client.post(path, data=data, format='json')
+
+        return response
+
+    def _patch_request(self, path, user, data):
+        with ForceLogin(user, self.client):
+            response = self.client.patch(path, data=data, format='json')
+
+        return response
+
+    def _get_request(self, path, user):
+        with ForceLogin(user, self.client):
+            response = self.client.get(path)
+
+        return response
+
+    def _delete_request(self, path, user):
+        with ForceLogin(user, self.client):
+            response = self.client.delete(path)
+
+        return response
+
+    def _fetch_job_from_db(self):
+        self.job = Job.objects.prefetch_related(
+            'review_set',
+            'review_set__issue_set',
+            'review_set__issue_set__comment_set').filter(segment__task_id=self.task.id).first()
+
+    def _set_annotation_status(self):
+        self._patch_request('/api/v1/jobs/{}'.format(self.job.id), self.admin, {'status': 'annotation'})
+
+    def _set_validation_status(self):
+        self._patch_request('/api/v1/jobs/{}'.format(self.job.id), self.admin, {'status': 'validation'})
+
+    def test_api_v1_job_annotation_review(self):
+        self._set_annotation_status()
+        response = self._post_request('/api/v1/reviews', self.reviewer, self.accept_review_data)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        response = self._post_request('/api/v1/reviews', self.assignee, self.accept_review_data)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_api_v1_job_validation_review_create(self):
+        self._set_validation_status()
+        response = self._post_request('/api/v1/reviews', self.reviewer, self.accept_review_data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self._fetch_job_from_db()
+        self.assertEqual(self.job.status, 'completed')
+        response = self._post_request('/api/v1/reviews', self.assignee, self.accept_review_data)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.job.review_set.first().delete()
+
+    def test_api_v1_job_reject_review(self):
+        self._set_validation_status()
+        response = self._post_request('/api/v1/reviews', self.reviewer, self.reject_review_data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self._fetch_job_from_db()
+        self.assertEqual(self.job.status, 'annotation')
+        self.job.review_set.first().delete()
+
+    def test_api_v1_job_review_further(self):
+        self._set_validation_status()
+        response = self._post_request('/api/v1/reviews', self.reviewer, self.review_further_data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self._fetch_job_from_db()
+        self.assertEqual(self.job.status, 'validation')
+        self.job.review_set.first().delete()
+
+    def test_api_v1_create_review_comment(self):
+        self._set_validation_status()
+        response = self._post_request('/api/v1/reviews', self.reviewer, self.reject_review_data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        issue_id = response.data['issue_set'][0]['id']
+        comments = self.create_comment_data[:]
+        for comment in comments:
+            comment.update({
+                'issue': issue_id
+            })
+            response = self._post_request('/api/v1/comments', self.assignee, comment)
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        response = self._get_request('/api/v1/issues/{}/comments'.format(issue_id), self.reviewer)
+        self.assertIsInstance(response.data, cls = list)
+        self.assertEqual(len(response.data), 5)
+        self.job.review_set.all().delete()
+        self.job.issue_set.all().delete()
+
+    def test_api_v1_edit_review_comment(self):
+        self._set_validation_status()
+        response = self._post_request('/api/v1/reviews', self.reviewer, self.reject_review_data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        issue_id = response.data['issue_set'][0]['id']
+        comments = self.create_comment_data[:]
+        for comment in comments:
+            comment.update({
+                'issue': issue_id
+            })
+            response = self._post_request('/api/v1/comments', self.assignee, comment)
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        response = self._get_request('/api/v1/issues/{}/comments'.format(issue_id), self.reviewer)
+        last_comment = max(response.data, key=lambda comment: comment['id'])
+        last_comment.update({
+            'message': 'fixed message 3'
+        })
+        last_comment.update({
+            'author_id': last_comment['author']['id'],
+            'author': None
+        })
+        response = self._patch_request('/api/v1/comments/{}'.format(last_comment['id']), self.reviewer, last_comment)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        response = self._patch_request('/api/v1/comments/{}'.format(last_comment['id']), self.assignee, last_comment)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['message'], last_comment['message'])
+        response = self._get_request('/api/v1/issues/{}/comments'.format(issue_id), self.reviewer)
+        updated_last_comment = max(response.data, key=lambda comment: comment['id'])
+        self.assertEqual(updated_last_comment['message'], last_comment['message'])
+        self.job.review_set.all().delete()
+        self.job.issue_set.all().delete()
+
+    def test_api_v1_remove_comment(self):
+        self._set_validation_status()
+        response = self._post_request('/api/v1/reviews', self.reviewer, self.reject_review_data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        issue_id = response.data['issue_set'][0]['id']
+        comments = self.create_comment_data[:]
+        for comment in comments:
+            comment.update({
+                'issue': issue_id
+            })
+            response = self._post_request('/api/v1/comments', self.assignee, comment)
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        response = self._get_request('/api/v1/issues/{}/comments'.format(issue_id), self.reviewer)
+        last_comment = max(response.data, key=lambda comment: comment['id'])
+        response = self._delete_request('/api/v1/comments/{}'.format(last_comment['id']), self.reviewer)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        response = self._delete_request('/api/v1/comments/{}'.format(last_comment['id']), self.assignee)
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self._fetch_job_from_db()
+        ids = list(map(lambda comment: comment.id, self.job.issue_set.first().comment_set.all()))
+        self.assertNotIn(last_comment['id'], ids)
+        self.job.review_set.all().delete()
+        self.job.issue_set.all().delete()
+
+    def test_api_v1_resolve_reopen_issue(self):
+        self._set_validation_status()
+        response = self._post_request('/api/v1/reviews', self.reviewer, self.reject_review_data)
+        response = self._get_request('/api/v1/jobs/{}/issues'.format(self.job.id), self.assignee)
+        issue_id = response.data[0]['id']
+
+        response = self._patch_request('/api/v1/issues/{}'.format(issue_id), self.assignee, {'resolver_id': self.assignee.id})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response = self._get_request('/api/v1/jobs/{}/issues'.format(self.job.id), self.assignee)
+        self.assertEqual(response.data[0]['resolver']['id'], self.assignee.id)
+
+        response = self._patch_request('/api/v1/issues/{}'.format(issue_id), self.reviewer, {'resolver_id': None})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response = self._get_request('/api/v1/jobs/{}/issues'.format(self.job.id), self.assignee)
+        self.assertEqual(response.data[0]['resolver'], None)
+
+        response = self._patch_request('/api/v1/issues/{}'.format(issue_id), self.reviewer, {'resolver_id': self.reviewer.id})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response = self._get_request('/api/v1/jobs/{}/issues'.format(self.job.id), self.reviewer)
+        self.assertEqual(response.data[0]['resolver']['id'], self.reviewer.id)
 
 class ServerAboutAPITestCase(APITestCase):
     def setUp(self):
@@ -758,10 +979,13 @@ class ProjectGetAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["name"], db_project.name)
         owner = db_project.owner.id if db_project.owner else None
-        self.assertEqual(response.data["owner"], owner)
+        response_owner = response.data["owner"]["id"] if response.data["owner"] else None
+        self.assertEqual(response_owner, owner)
         assignee = db_project.assignee.id if db_project.assignee else None
-        self.assertEqual(response.data["assignee"], assignee)
+        response_assignee = response.data["assignee"]["id"] if response.data["assignee"] else None
+        self.assertEqual(response_assignee, assignee)
         self.assertEqual(response.data["status"], db_project.status)
+        self.assertEqual(response.data["bug_tracker"], db_project.bug_tracker)
 
     def _check_api_v1_projects_id(self, user):
         for db_project in self.projects:
@@ -839,10 +1063,15 @@ class ProjectCreateAPITestCase(APITestCase):
     def _check_response(self, response, user, data):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["name"], data["name"])
-        self.assertEqual(response.data["owner"], data.get("owner", user.id))
-        self.assertEqual(response.data["assignee"], data.get("assignee"))
+        self.assertEqual(response.data["owner"]["id"], data.get("owner_id", user.id))
+        response_assignee = response.data["assignee"]["id"] if response.data["assignee"] else None
+        self.assertEqual(response_assignee, data.get('assignee_id', None))
         self.assertEqual(response.data["bug_tracker"], data.get("bug_tracker", ""))
         self.assertEqual(response.data["status"], StatusChoice.ANNOTATION)
+        self.assertListEqual(
+            [label["name"] for label in data.get("labels", [])],
+            [label["name"] for label in response.data["labels"]]
+        )
 
     def _check_api_v1_projects(self, user, data):
         response = self._run_api_v1_projects(user, data)
@@ -861,15 +1090,23 @@ class ProjectCreateAPITestCase(APITestCase):
         self._check_api_v1_projects(self.admin, data)
 
         data = {
-            "owner": self.owner.id,
-            "assignee": self.assignee.id,
+            "owner_id": self.owner.id,
+            "assignee_id": self.assignee.id,
             "name": "new name for the project"
         }
         self._check_api_v1_projects(self.admin, data)
 
         data = {
-            "owner": self.admin.id,
+            "owner_id": self.admin.id,
             "name": "2"
+        }
+        self._check_api_v1_projects(self.admin, data)
+
+        data = {
+            "name": "Project with labels",
+            "labels": [{
+                "name": "car",
+            }]
         }
         self._check_api_v1_projects(self.admin, data)
 
@@ -882,8 +1119,8 @@ class ProjectCreateAPITestCase(APITestCase):
         self._check_api_v1_projects(self.user, data)
 
         data = {
-            "owner": self.owner.id,
-            "assignee": self.assignee.id,
+            "owner_id": self.owner.id,
+            "assignee_id": self.assignee.id,
             "name": "My import project with data"
         }
         self._check_api_v1_projects(self.user, data)
@@ -892,15 +1129,15 @@ class ProjectCreateAPITestCase(APITestCase):
     def test_api_v1_projects_observer(self):
         data = {
             "name": "My Project #1",
-            "owner": self.owner.id,
-            "assignee": self.assignee.id
+            "owner_id": self.owner.id,
+            "assignee_id": self.assignee.id
         }
         self._check_api_v1_projects(self.observer, data)
 
     def test_api_v1_projects_no_auth(self):
         data = {
             "name": "My Project #2",
-            "owner": self.admin.id,
+            "owner_id": self.admin.id,
         }
         self._check_api_v1_projects(None, data)
 
@@ -922,15 +1159,16 @@ class ProjectPartialUpdateAPITestCase(APITestCase):
 
     def _check_response(self, response, db_project, data):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        name = data.get("name", db_project.name)
+        name = data.get("name", data.get("name", db_project.name))
         self.assertEqual(response.data["name"], name)
-        owner = db_project.owner.id if db_project.owner else None
-        owner = data.get("owner", owner)
-        self.assertEqual(response.data["owner"], owner)
-        assignee = db_project.assignee.id if db_project.assignee else None
-        assignee = data.get("assignee", assignee)
-        self.assertEqual(response.data["assignee"], assignee)
-        self.assertEqual(response.data["status"], db_project.status)
+        response_owner = response.data["owner"]["id"] if response.data["owner"] else None
+        db_owner = db_project.owner.id if db_project.owner else None
+        self.assertEqual(response_owner, data.get("owner_id", db_owner))
+        response_assignee = response.data["assignee"]["id"] if response.data["assignee"] else None
+        db_assignee = db_project.assignee.id if db_project.assignee else None
+        self.assertEqual(response_assignee, data.get("assignee_id", db_assignee))
+        self.assertEqual(response.data["status"], data.get("status", db_project.status))
+        self.assertEqual(response.data["bug_tracker"], data.get("bug_tracker", db_project.bug_tracker))
 
     def _check_api_v1_projects_id(self, user, data):
         for db_project in self.projects:
@@ -945,14 +1183,15 @@ class ProjectPartialUpdateAPITestCase(APITestCase):
     def test_api_v1_projects_id_admin(self):
         data = {
             "name": "new name for the project",
-            "owner": self.owner.id,
+            "owner_id": self.owner.id,
+            "bug_tracker": "https://new.bug.tracker",
         }
         self._check_api_v1_projects_id(self.admin, data)
 
     def test_api_v1_projects_id_user(self):
         data = {
             "name": "new name for the project",
-            "owner": self.assignee.id,
+            "owner_id": self.assignee.id,
         }
         self._check_api_v1_projects_id(self.user, data)
 
@@ -1077,12 +1316,13 @@ class TaskGetAPITestCase(APITestCase):
         self.assertEqual(response.data["size"], db_task.data.size)
         self.assertEqual(response.data["mode"], db_task.mode)
         owner = db_task.owner.id if db_task.owner else None
-        self.assertEqual(response.data["owner"], owner)
+        response_owner = response.data["owner"]["id"] if response.data["owner"] else None
+        self.assertEqual(response_owner, owner)
         assignee = db_task.assignee.id if db_task.assignee else None
-        self.assertEqual(response.data["assignee"], assignee)
+        response_assignee = response.data["assignee"]["id"] if response.data["assignee"] else None
+        self.assertEqual(response_assignee, assignee)
         self.assertEqual(response.data["overlap"], db_task.overlap)
         self.assertEqual(response.data["segment_size"], db_task.segment_size)
-        self.assertEqual(response.data["z_order"], db_task.z_order)
         self.assertEqual(response.data["image_quality"], db_task.data.image_quality)
         self.assertEqual(response.data["status"], db_task.status)
         self.assertListEqual(
@@ -1184,15 +1424,15 @@ class TaskUpdateAPITestCase(APITestCase):
         mode = data.get("mode", db_task.mode)
         self.assertEqual(response.data["mode"], mode)
         owner = db_task.owner.id if db_task.owner else None
-        owner = data.get("owner", owner)
-        self.assertEqual(response.data["owner"], owner)
+        owner = data.get("owner_id", owner)
+        response_owner = response.data["owner"]["id"] if response.data["owner"] else None
+        self.assertEqual(response_owner, owner)
         assignee = db_task.assignee.id if db_task.assignee else None
-        assignee = data.get("assignee", assignee)
-        self.assertEqual(response.data["assignee"], assignee)
+        assignee = data.get("assignee_id", assignee)
+        response_assignee = response.data["assignee"]["id"] if response.data["assignee"] else None
+        self.assertEqual(response_assignee, assignee)
         self.assertEqual(response.data["overlap"], db_task.overlap)
         self.assertEqual(response.data["segment_size"], db_task.segment_size)
-        z_order = data.get("z_order", db_task.z_order)
-        self.assertEqual(response.data["z_order"], z_order)
         image_quality = data.get("image_quality", db_task.data.image_quality)
         self.assertEqual(response.data["image_quality"], image_quality)
         self.assertEqual(response.data["status"], db_task.status)
@@ -1220,7 +1460,7 @@ class TaskUpdateAPITestCase(APITestCase):
     def test_api_v1_tasks_id_admin(self):
         data = {
             "name": "new name for the task",
-            "owner": self.owner.id,
+            "owner_id": self.owner.id,
             "labels": [{
                 "name": "non-vehicle",
                 "attributes": [{
@@ -1236,7 +1476,7 @@ class TaskUpdateAPITestCase(APITestCase):
     def test_api_v1_tasks_id_user(self):
         data = {
             "name": "new name for the task",
-            "owner": self.assignee.id,
+            "owner_id": self.assignee.id,
             "labels": [{
                 "name": "car",
                 "attributes": [{
@@ -1284,7 +1524,7 @@ class TaskPartialUpdateAPITestCase(TaskUpdateAPITestCase):
 
         data = {
             "name": "new name for the task",
-            "owner": self.owner.id
+            "owner_id": self.owner.id
         }
         self._check_api_v1_tasks_id(self.admin, data)
         # Now owner is updated, but self.db_tasks are obsolete
@@ -1307,8 +1547,8 @@ class TaskPartialUpdateAPITestCase(TaskUpdateAPITestCase):
         self._check_api_v1_tasks_id(self.user, data)
 
         data = {
-            "owner": self.observer.id,
-            "assignee": self.annotator.id
+            "owner_id": self.observer.id,
+            "assignee_id": self.annotator.id
         }
         self._check_api_v1_tasks_id(self.user, data)
 
@@ -1331,6 +1571,16 @@ class TaskPartialUpdateAPITestCase(TaskUpdateAPITestCase):
 class TaskCreateAPITestCase(APITestCase):
     def setUp(self):
         self.client = APIClient()
+        project = {
+            "name": "Project for task creation",
+            "owner": self.user,
+        }
+        self.project = Project.objects.create(**project)
+        label = {
+            "name": "car",
+            "project": self.project
+        }
+        Label.objects.create(**label)
 
     @classmethod
     def setUpTestData(cls):
@@ -1346,12 +1596,13 @@ class TaskCreateAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["name"], data["name"])
         self.assertEqual(response.data["mode"], "")
-        self.assertEqual(response.data["owner"], data.get("owner", user.id))
-        self.assertEqual(response.data["assignee"], data.get("assignee"))
+        self.assertEqual(response.data["project_id"], data.get("project_id", None))
+        self.assertEqual(response.data["owner"]["id"], data.get("owner_id", user.id))
+        assignee = response.data["assignee"]["id"] if response.data["assignee"] else None
+        self.assertEqual(assignee, data.get("assignee_id", None))
         self.assertEqual(response.data["bug_tracker"], data.get("bug_tracker", ""))
         self.assertEqual(response.data["overlap"], data.get("overlap", None))
         self.assertEqual(response.data["segment_size"], data.get("segment_size", 0))
-        self.assertEqual(response.data["z_order"], data.get("z_order", False))
         self.assertEqual(response.data["status"], StatusChoice.ANNOTATION)
         self.assertListEqual(
             [label["name"] for label in data.get("labels")],
@@ -1385,7 +1636,7 @@ class TaskCreateAPITestCase(APITestCase):
     def test_api_v1_tasks_user(self):
         data = {
             "name": "new name for the task",
-            "owner": self.assignee.id,
+            "owner_id": self.assignee.id,
             "labels": [{
                 "name": "car",
                 "attributes": [{
@@ -1398,6 +1649,17 @@ class TaskCreateAPITestCase(APITestCase):
             }]
         }
         self._check_api_v1_tasks(self.user, data)
+
+    def test_api_vi_tasks_user_project(self):
+        data = {
+            "name": "new name for the task",
+            "project_id": self.project.id,
+        }
+        response = self._run_api_v1_tasks(self.user, data)
+        data["labels"] = [{
+            "name": "car"
+        }]
+        self._check_response(response, self.user, data)
 
     def test_api_v1_tasks_observer(self):
         data = {
@@ -1439,12 +1701,13 @@ def generate_image_files(*args):
 
     return image_sizes, images
 
-def generate_video_file(filename, width=1920, height=1080, duration=1, fps=25):
+def generate_video_file(filename, width=1920, height=1080, duration=1, fps=25, codec_name='mpeg4'):
     f = BytesIO()
     total_frames = duration * fps
-    container = av.open(f, mode='w', format='mp4')
+    file_ext = os.path.splitext(filename)[1][1:]
+    container = av.open(f, mode='w', format=file_ext)
 
-    stream = container.add_stream('mpeg4', rate=fps)
+    stream = container.add_stream(codec_name=codec_name, rate=fps)
     stream.width = width
     stream.height = height
     stream.pix_fmt = 'yuv420p'
@@ -1556,6 +1819,16 @@ class TaskDataAPITestCase(APITestCase):
             video.write(data.read())
         cls._image_sizes[filename] = img_sizes
 
+        filename = "test_rotated_90_video.mp4"
+        path = os.path.join(os.path.dirname(__file__), 'assets', 'test_rotated_90_video.mp4')
+        container = av.open(path, 'r')
+        for frame in container.decode(video=0):
+            # pyav ignores rotation record in metadata when decoding frames
+            img_sizes = [(frame.height, frame.width)] * container.streams.video[0].frames
+            break
+        container.close()
+        cls._image_sizes[filename] = img_sizes
+
         filename = os.path.join("videos", "test_video_1.mp4")
         path = os.path.join(settings.SHARE_ROOT, filename)
         os.makedirs(os.path.dirname(path))
@@ -1570,6 +1843,47 @@ class TaskDataAPITestCase(APITestCase):
         with open(path, "wb") as zip_archive:
             zip_archive.write(data.read())
         cls._image_sizes[filename] = img_sizes
+
+        filename = "test_pointcloud_pcd.zip"
+        path = os.path.join(os.path.dirname(__file__), 'assets', filename)
+        image_sizes = []
+        # container = av.open(path, 'r')
+        zip_file = zipfile.ZipFile(path)
+        for info in zip_file.namelist():
+            if info.rsplit(".", maxsplit=1)[-1] == "pcd":
+                with zip_file.open(info, "r") as file:
+                    data = ValidateDimension.get_pcd_properties(file)
+                    image_sizes.append((int(data["WIDTH"]), int(data["HEIGHT"])))
+        cls._image_sizes[filename] = image_sizes
+
+        filename = "test_velodyne_points.zip"
+        path = os.path.join(os.path.dirname(__file__), 'assets', filename)
+        image_sizes = []
+        # create zip instance
+
+        zip_file = zipfile.ZipFile(path, mode='a')
+
+        source_path = []
+        root_path = os.path.abspath(os.path.split(path)[0])
+
+        for info in zip_file.namelist():
+            if os.path.splitext(info)[1][1:] == "bin":
+                zip_file.extract(info, root_path)
+                bin_path = os.path.abspath(os.path.join(root_path, info))
+                source_path.append(ValidateDimension.convert_bin_to_pcd(bin_path))
+
+        for path in source_path:
+            zip_file.write(path, os.path.abspath(path.replace(root_path, "")))
+
+        for info in zip_file.namelist():
+            if os.path.splitext(info)[1][1:] == "pcd":
+                with zip_file.open(info, "r") as file:
+                    data = ValidateDimension.get_pcd_properties(file)
+                    image_sizes.append((int(data["WIDTH"]), int(data["HEIGHT"])))
+        root_path = os.path.abspath(os.path.join(root_path, filename.split(".")[0]))
+
+        shutil.rmtree(root_path)
+        cls._image_sizes[filename] = image_sizes
 
     @classmethod
     def tearDownClass(cls):
@@ -1636,8 +1950,10 @@ class TaskDataAPITestCase(APITestCase):
         return self._run_api_v1_task_id_data_get(tid, user, "frame", "original", number)
 
     @staticmethod
-    def _extract_zip_chunk(chunk_buffer):
+    def _extract_zip_chunk(chunk_buffer, dimension=DimensionType.DIM_2D):
         chunk = zipfile.ZipFile(chunk_buffer, mode='r')
+        if dimension == DimensionType.DIM_3D:
+            return [BytesIO(chunk.read(f)) for f in sorted(chunk.namelist()) if f.rsplit(".", maxsplit=1)[-1] == "pcd"]
         return [Image.open(BytesIO(chunk.read(f))) for f in sorted(chunk.namelist())]
 
     @staticmethod
@@ -1647,7 +1963,8 @@ class TaskDataAPITestCase(APITestCase):
         return [f.to_image() for f in container.decode(stream)]
 
     def _test_api_v1_tasks_id_data_spec(self, user, spec, data, expected_compressed_type, expected_original_type, image_sizes,
-                                        expected_storage_method=StorageMethodChoice.FILE_SYSTEM):
+                                        expected_storage_method=StorageMethodChoice.FILE_SYSTEM,
+                                        expected_uploaded_data_location=StorageChoice.LOCAL, dimension=DimensionType.DIM_2D):
         # create task
         response = self._create_task(user, spec)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -1661,8 +1978,8 @@ class TaskDataAPITestCase(APITestCase):
         response = self._get_task(user, task_id)
 
         expected_status_code = status.HTTP_200_OK
-        if user == self.user and "owner" in spec and spec["owner"] != user.id and \
-           "assignee" in spec and spec["assignee"] != user.id:
+        if user == self.user and "owner_id" in spec and spec["owner_id"] != user.id and \
+           "assignee_id" in spec and spec["assignee_id"] != user.id:
             expected_status_code = status.HTTP_403_FORBIDDEN
         self.assertEqual(response.status_code, expected_status_code)
 
@@ -1671,14 +1988,21 @@ class TaskDataAPITestCase(APITestCase):
             self.assertEqual(expected_compressed_type, task["data_compressed_chunk_type"])
             self.assertEqual(expected_original_type, task["data_original_chunk_type"])
             self.assertEqual(len(image_sizes), task["size"])
-            self.assertEqual(expected_storage_method, Task.objects.get(pk=task_id).data.storage_method)
+            db_data = Task.objects.get(pk=task_id).data
+            self.assertEqual(expected_storage_method, db_data.storage_method)
+            self.assertEqual(expected_uploaded_data_location, db_data.storage)
+            # check if used share without copying inside and files doesn`t exist in ../raw/
+            if expected_uploaded_data_location is StorageChoice.SHARE:
+                self.assertEqual(False,
+                    os.path.exists(os.path.join(db_data.get_upload_dirname(), next(iter(data.values())))))
 
         # check preview
         response = self._get_preview(task_id, user)
         self.assertEqual(response.status_code, expected_status_code)
         if expected_status_code == status.HTTP_200_OK:
-            preview = Image.open(io.BytesIO(b"".join(response.streaming_content)))
-            self.assertLessEqual(preview.size, image_sizes[0])
+            if dimension == DimensionType.DIM_2D:
+                preview = Image.open(io.BytesIO(b"".join(response.streaming_content)))
+                self.assertLessEqual(preview.size, image_sizes[0])
 
         # check compressed chunk
         response = self._get_compressed_chunk(task_id, user, 0)
@@ -1689,14 +2013,18 @@ class TaskDataAPITestCase(APITestCase):
             else:
                 compressed_chunk = io.BytesIO(b"".join(response.streaming_content))
             if task["data_compressed_chunk_type"] == self.ChunkType.IMAGESET:
-                images = self._extract_zip_chunk(compressed_chunk)
+                images = self._extract_zip_chunk(compressed_chunk, dimension=dimension)
             else:
                 images = self._extract_video_chunk(compressed_chunk)
 
             self.assertEqual(len(images), min(task["data_chunk_size"], len(image_sizes)))
 
             for image_idx, image in enumerate(images):
-                self.assertEqual(image.size, image_sizes[image_idx])
+                if dimension == DimensionType.DIM_3D:
+                    properties = ValidateDimension.get_pcd_properties(image)
+                    self.assertEqual((int(properties["WIDTH"]),int(properties["HEIGHT"])), image_sizes[image_idx])
+                else:
+                    self.assertEqual(image.size, image_sizes[image_idx])
 
         # check original chunk
         response = self._get_original_chunk(task_id, user, 0)
@@ -1707,12 +2035,16 @@ class TaskDataAPITestCase(APITestCase):
             else:
                 original_chunk  = io.BytesIO(b"".join(response.streaming_content))
             if task["data_original_chunk_type"] == self.ChunkType.IMAGESET:
-                images = self._extract_zip_chunk(original_chunk)
+                images = self._extract_zip_chunk(original_chunk, dimension=dimension)
             else:
                 images = self._extract_video_chunk(original_chunk)
 
             for image_idx, image in enumerate(images):
-                self.assertEqual(image.size, image_sizes[image_idx])
+                if dimension == DimensionType.DIM_3D:
+                    properties = ValidateDimension.get_pcd_properties(image)
+                    self.assertEqual((int(properties["WIDTH"]), int(properties["HEIGHT"])), image_sizes[image_idx])
+                else:
+                    self.assertEqual(image.size, image_sizes[image_idx])
 
             self.assertEqual(len(images), min(task["data_chunk_size"], len(image_sizes)))
 
@@ -1728,7 +2060,7 @@ class TaskDataAPITestCase(APITestCase):
                 source_images = []
                 for f in source_files:
                     if zipfile.is_zipfile(f):
-                        source_images.extend(self._extract_zip_chunk(f))
+                        source_images.extend(self._extract_zip_chunk(f, dimension=dimension))
                     elif isinstance(f, io.BytesIO) and \
                             str(getattr(f, 'name', None)).endswith('.pdf'):
                         source_images.extend(convert_from_bytes(f.getvalue(),
@@ -1737,18 +2069,22 @@ class TaskDataAPITestCase(APITestCase):
                         source_images.append(Image.open(f))
 
                 for img_idx, image in enumerate(images):
-                    server_image = np.array(image)
-                    source_image = np.array(source_images[img_idx])
-                    self.assertTrue(np.array_equal(source_image, server_image))
+                    if dimension == DimensionType.DIM_3D:
+                        server_image = np.array(image.getbuffer())
+                        source_image = np.array(source_images[img_idx].getbuffer())
+                        self.assertTrue(np.array_equal(source_image, server_image))
+                    else:
+                        server_image = np.array(image)
+                        source_image = np.array(source_images[img_idx])
+                        self.assertTrue(np.array_equal(source_image, server_image))
 
     def _test_api_v1_tasks_id_data(self, user):
         task_spec = {
             "name": "my task #1",
-            "owner": self.owner.id,
-            "assignee": self.assignee.id,
+            "owner_id": self.owner.id,
+            "assignee_id": self.assignee.id,
             "overlap": 0,
             "segment_size": 100,
-            "z_order": False,
             "labels": [
                 {"name": "car"},
                 {"name": "person"},
@@ -1766,7 +2102,7 @@ class TaskDataAPITestCase(APITestCase):
         self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.IMAGESET, image_sizes)
 
         task_spec = {
-            "name": "my task #2",
+            "name": "my task without copying #2",
             "overlap": 0,
             "segment_size": 0,
             "labels": [
@@ -1789,13 +2125,18 @@ class TaskDataAPITestCase(APITestCase):
             self._image_sizes[task_data["server_files[2]"]],
         ]
 
-        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.IMAGESET, image_sizes)
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.IMAGESET, image_sizes,
+                                             expected_uploaded_data_location=StorageChoice.SHARE)
+
+        task_spec.update([('name', 'my task #3')])
+        task_data.update([('copy_data', True)])
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.IMAGESET,
+                                             image_sizes, expected_uploaded_data_location=StorageChoice.LOCAL)
 
         task_spec = {
-            "name": "my video task #1",
+            "name": "my video task #4",
             "overlap": 0,
             "segment_size": 100,
-            "z_order": False,
             "labels": [
                 {"name": "car"},
                 {"name": "person"},
@@ -1810,7 +2151,7 @@ class TaskDataAPITestCase(APITestCase):
         self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO, self.ChunkType.VIDEO, image_sizes)
 
         task_spec = {
-            "name": "my video task #2",
+            "name": "my video task without copying #5",
             "overlap": 0,
             "segment_size": 5,
             "labels": [
@@ -1825,10 +2166,16 @@ class TaskDataAPITestCase(APITestCase):
         }
         image_sizes = self._image_sizes[task_data["server_files[0]"]]
 
-        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO, self.ChunkType.VIDEO, image_sizes)
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO, self.ChunkType.VIDEO, image_sizes,
+                                             expected_uploaded_data_location=StorageChoice.SHARE)
+
+        task_spec.update([('name', 'my video task #6')])
+        task_data.update([('copy_data', True)])
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO, self.ChunkType.VIDEO,
+                                             image_sizes, expected_uploaded_data_location=StorageChoice.LOCAL)
 
         task_spec = {
-            "name": "my video task #3",
+            "name": "my video task without copying #7",
             "overlap": 0,
             "segment_size": 0,
             "labels": [
@@ -1842,10 +2189,16 @@ class TaskDataAPITestCase(APITestCase):
         }
         image_sizes = self._image_sizes[task_data["server_files[0]"]]
 
-        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO, self.ChunkType.VIDEO, image_sizes)
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO, self.ChunkType.VIDEO, image_sizes,
+                                             expected_uploaded_data_location=StorageChoice.SHARE)
+
+        task_spec.update([("name", "my video task #8")])
+        task_data.update([("copy_data", True)])
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO, self.ChunkType.VIDEO,
+                                             image_sizes, expected_uploaded_data_location=StorageChoice.LOCAL)
 
         task_spec = {
-            "name": "my video task #4",
+            "name": "my video task without copying #9",
             "overlap": 0,
             "segment_size": 5,
             "labels": [
@@ -1861,10 +2214,16 @@ class TaskDataAPITestCase(APITestCase):
         }
         image_sizes = self._image_sizes[task_data["server_files[0]"]]
 
-        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.VIDEO, image_sizes)
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.VIDEO, image_sizes,
+                                             expected_uploaded_data_location=StorageChoice.SHARE)
+
+        task_spec.update([('name', 'my video task #10')])
+        task_data.update([('copy_data', True)])
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.VIDEO,
+                                             image_sizes, expected_uploaded_data_location=StorageChoice.LOCAL)
 
         task_spec = {
-            "name": "my archive task #6",
+            "name": "my archive task without copying #11",
             "overlap": 0,
             "segment_size": 0,
             "labels": [
@@ -1878,10 +2237,16 @@ class TaskDataAPITestCase(APITestCase):
         }
         image_sizes = self._image_sizes[task_data["server_files[0]"]]
 
-        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.IMAGESET, image_sizes)
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.IMAGESET, image_sizes,
+                                             expected_uploaded_data_location=StorageChoice.SHARE)
+
+        task_spec.update([('name', 'my archive task #12')])
+        task_data.update([('copy_data', True)])
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.IMAGESET,
+                                             image_sizes, expected_uploaded_data_location=StorageChoice.LOCAL)
 
         task_spec = {
-            "name": "my archive task #7",
+            "name": "my archive task #13",
             "overlap": 0,
             "segment_size": 0,
             "labels": [
@@ -1898,7 +2263,7 @@ class TaskDataAPITestCase(APITestCase):
         self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.IMAGESET, image_sizes)
 
         task_spec = {
-            "name": "cached video task #8",
+            "name": "cached video task without copying #14",
             "overlap": 0,
             "segment_size": 0,
             "labels": [
@@ -1916,10 +2281,15 @@ class TaskDataAPITestCase(APITestCase):
         image_sizes = self._image_sizes[task_data["server_files[0]"]]
 
         self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO,
-            self.ChunkType.VIDEO, image_sizes, StorageMethodChoice.CACHE)
+            self.ChunkType.VIDEO, image_sizes, StorageMethodChoice.CACHE, StorageChoice.SHARE)
+
+        task_spec.update([('name', 'cached video task #15')])
+        task_data.update([('copy_data', True)])
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO, self.ChunkType.VIDEO,
+                                             image_sizes, StorageMethodChoice.CACHE, StorageChoice.LOCAL)
 
         task_spec = {
-            "name": "cached images task #9",
+            "name": "cached images task without copying #16",
             "overlap": 0,
             "segment_size": 0,
             "labels": [
@@ -1942,10 +2312,15 @@ class TaskDataAPITestCase(APITestCase):
         ]
 
         self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET,
-            self.ChunkType.IMAGESET, image_sizes, StorageMethodChoice.CACHE)
+            self.ChunkType.IMAGESET, image_sizes, StorageMethodChoice.CACHE, StorageChoice.SHARE)
+
+        task_spec.update([('name', 'cached images task #17')])
+        task_data.update([('copy_data', True)])
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.IMAGESET,
+                                             image_sizes, StorageMethodChoice.CACHE, StorageChoice.LOCAL)
 
         task_spec = {
-            "name": "my cached zip archive task #10",
+            "name": "my cached zip archive task without copying #18",
             "overlap": 0,
             "segment_size": 0,
             "labels": [
@@ -1963,10 +2338,15 @@ class TaskDataAPITestCase(APITestCase):
         image_sizes = self._image_sizes[task_data["server_files[0]"]]
 
         self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET,
-            self.ChunkType.IMAGESET, image_sizes, StorageMethodChoice.CACHE)
+            self.ChunkType.IMAGESET, image_sizes, StorageMethodChoice.CACHE, StorageChoice.SHARE)
+
+        task_spec.update([('name', 'my cached zip archive task #19')])
+        task_data.update([('copy_data', True)])
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET, self.ChunkType.IMAGESET,
+                                             image_sizes, StorageMethodChoice.CACHE, StorageChoice.LOCAL)
 
         task_spec = {
-            "name": "my cached pdf task #11",
+            "name": "my cached pdf task #20",
             "overlap": 0,
             "segment_size": 0,
             "labels": [
@@ -1988,7 +2368,7 @@ class TaskDataAPITestCase(APITestCase):
             image_sizes, StorageMethodChoice.CACHE)
 
         task_spec = {
-            "name": "my pdf task #12",
+            "name": "my pdf task #21",
             "overlap": 0,
             "segment_size": 0,
             "labels": [
@@ -2013,7 +2393,7 @@ class TaskDataAPITestCase(APITestCase):
             os.path.join(settings.SHARE_ROOT, "videos")
         )
         task_spec = {
-            "name": "my video with meta info task #11",
+            "name": "my video with meta info task without copying #22",
             "overlap": 0,
             "segment_size": 0,
             "labels": [
@@ -2030,7 +2410,110 @@ class TaskDataAPITestCase(APITestCase):
         image_sizes = self._image_sizes[task_data['server_files[0]']]
 
         self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO,
-                                            self.ChunkType.VIDEO, image_sizes, StorageMethodChoice.CACHE)
+                                            self.ChunkType.VIDEO, image_sizes, StorageMethodChoice.CACHE,
+                                            StorageChoice.SHARE)
+
+        task_spec.update([('name', 'my video with meta info task #23')])
+        task_data.update([('copy_data', True)])
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO, self.ChunkType.VIDEO,
+                                             image_sizes, StorageMethodChoice.CACHE, StorageChoice.LOCAL)
+
+        task_spec = {
+            "name": "my cached video task #14",
+            "overlap": 0,
+            "segment_size": 0,
+            "labels": [
+                {"name": "car"},
+                {"name": "person"},
+            ]
+        }
+
+        task_data = {
+            "client_files[0]": open(os.path.join(os.path.dirname(__file__), 'assets', 'test_rotated_90_video.mp4'), 'rb'),
+            "image_quality": 70,
+            "use_zip_chunks": True
+        }
+
+        image_sizes = self._image_sizes['test_rotated_90_video.mp4']
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET,
+            self.ChunkType.VIDEO, image_sizes, StorageMethodChoice.FILE_SYSTEM)
+
+        task_spec = {
+            "name": "my video task #15",
+            "overlap": 0,
+            "segment_size": 0,
+            "labels": [
+                {"name": "car"},
+                {"name": "person"},
+            ]
+        }
+
+        task_data = {
+            "client_files[0]": open(os.path.join(os.path.dirname(__file__), 'assets', 'test_rotated_90_video.mp4'), 'rb'),
+            "image_quality": 70,
+            "use_cache": True,
+            "use_zip_chunks": True
+        }
+
+        image_sizes = self._image_sizes['test_rotated_90_video.mp4']
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET,
+            self.ChunkType.VIDEO, image_sizes, StorageMethodChoice.CACHE)
+
+        task_spec = {
+            "name": "test mxf format",
+            "use_zip_chunks": False,
+            "labels": [
+                {"name": "car"},
+                {"name": "person"},
+            ],
+        }
+
+        image_sizes, video = generate_video_file(filename="test_video_1.mxf", width=1280, height=720, codec_name='mpeg2video')
+        task_data = {
+            "client_files[0]": video,
+            "image_quality": 51,
+        }
+
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.VIDEO, self.ChunkType.VIDEO, image_sizes)
+
+        task_spec = {
+            "name": "my archive task #24",
+            "overlap": 0,
+            "segment_size": 0,
+            "labels": [
+                {"name": "car"},
+                {"name": "person"},
+            ]
+        }
+
+        task_data = {
+            "client_files[0]": open(os.path.join(os.path.dirname(__file__), 'assets', 'test_pointcloud_pcd.zip'), 'rb'),
+            "image_quality": 100,
+        }
+        image_sizes = self._image_sizes["test_pointcloud_pcd.zip"]
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET,
+                                             self.ChunkType.IMAGESET,
+                                             image_sizes, dimension=DimensionType.DIM_3D)
+
+        task_spec = {
+            "name": "my archive task #25",
+            "overlap": 0,
+            "segment_size": 0,
+            "labels": [
+                {"name": "car"},
+                {"name": "person"},
+            ]
+        }
+
+        task_data = {
+            "client_files[0]": open(os.path.join(os.path.dirname(__file__), 'assets', 'test_velodyne_points.zip'),
+                                    'rb'),
+            "image_quality": 100,
+        }
+        image_sizes = self._image_sizes["test_velodyne_points.zip"]
+        self._test_api_v1_tasks_id_data_spec(user, task_spec, task_data, self.ChunkType.IMAGESET,
+                                             self.ChunkType.IMAGESET,
+                                             image_sizes, dimension=DimensionType.DIM_3D)
 
     def test_api_v1_tasks_id_data_admin(self):
         self._test_api_v1_tasks_id_data(self.admin)
@@ -2044,11 +2527,10 @@ class TaskDataAPITestCase(APITestCase):
     def test_api_v1_tasks_id_data_no_auth(self):
         data = {
             "name": "my task #3",
-            "owner": self.owner.id,
-            "assignee": self.assignee.id,
+            "owner_id": self.owner.id,
+            "assignee_id": self.assignee.id,
             "overlap": 0,
             "segment_size": 100,
-            "z_order": False,
             "labels": [
                 {"name": "car"},
                 {"name": "person"},
@@ -2091,11 +2573,10 @@ class JobAnnotationAPITestCase(APITestCase):
     def _create_task(self, owner, assignee):
         data = {
             "name": "my task #1",
-            "owner": owner.id,
-            "assignee": assignee.id,
+            "owner_id": owner.id,
+            "assignee_id": assignee.id,
             "overlap": 0,
             "segment_size": 100,
-            "z_order": False,
             "labels": [
                 {
                     "name": "car",
@@ -3183,6 +3664,39 @@ class TaskAnnotationAPITestCase(JobAnnotationAPITestCase):
                     }
                 ]
             }]
+            polygon_tracks_wo_attrs = [{
+                "frame": 0,
+                "label_id": task["labels"][1]["id"],
+                "group": 0,
+                "source": "manual",
+                "attributes": [],
+                "shapes": [
+                    {
+                        "frame": 0,
+                        "attributes": [],
+                        "points": [1.0, 2.1, 50.2, 36.6, 7.0, 10.0],
+                        "type": "polygon",
+                        "occluded": False,
+                        "outside": False,
+                    },
+                    {
+                        "frame": 1,
+                        "attributes": [],
+                        "points": [1.0, 2.1, 51, 36.6, 8.0, 11.0],
+                        "type": "polygon",
+                        "occluded": False,
+                        "outside": False
+                    },
+                    {
+                        "frame": 2,
+                        "attributes": [],
+                        "points": [1.0, 2.1, 51, 36.6, 14.0, 15.0],
+                        "type": "polygon",
+                        "occluded": False,
+                        "outside": True,
+                    }
+                ]
+            }]
 
             rectangle_shapes_with_attrs = [{
                 "frame": 0,
@@ -3287,11 +3801,15 @@ class TaskAnnotationAPITestCase(JobAnnotationAPITestCase):
                     "tracks": [],
                 }
             if annotation_format == "CVAT for video 1.1":
-                annotations["tracks"] = rectangle_tracks_with_attrs + rectangle_tracks_wo_attrs
+                annotations["tracks"] = rectangle_tracks_with_attrs \
+                                      + rectangle_tracks_wo_attrs \
+                                      + polygon_tracks_wo_attrs
 
             elif annotation_format == "CVAT for images 1.1":
-                annotations["shapes"] = rectangle_shapes_with_attrs + rectangle_shapes_wo_attrs \
-                    + polygon_shapes_wo_attrs + polygon_shapes_with_attrs
+                annotations["shapes"] = rectangle_shapes_with_attrs \
+                                      + rectangle_shapes_wo_attrs \
+                                      + polygon_shapes_wo_attrs \
+                                      + polygon_shapes_with_attrs
                 annotations["tags"] = tags_with_attrs + tags_wo_attrs
 
             elif annotation_format == "PASCAL VOC 1.1":
@@ -3306,25 +3824,36 @@ class TaskAnnotationAPITestCase(JobAnnotationAPITestCase):
                 annotations["shapes"] = polygon_shapes_wo_attrs
 
             elif annotation_format == "Segmentation mask 1.1":
-                annotations["shapes"] = rectangle_shapes_wo_attrs + polygon_shapes_wo_attrs
+                annotations["shapes"] = rectangle_shapes_wo_attrs \
+                                      + polygon_shapes_wo_attrs
                 annotations["tracks"] = rectangle_tracks_wo_attrs
 
             elif annotation_format == "MOT 1.1":
                 annotations["shapes"] = rectangle_shapes_wo_attrs
                 annotations["tracks"] = rectangle_tracks_wo_attrs
 
+            elif annotation_format == "MOTS PNG 1.0":
+                annotations["tracks"] = polygon_tracks_wo_attrs
+
             elif annotation_format == "LabelMe 3.0":
-                annotations["shapes"] = rectangle_shapes_with_attrs + \
-                                        rectangle_shapes_wo_attrs + \
-                                        polygon_shapes_wo_attrs + \
-                                        polygon_shapes_with_attrs
+                annotations["shapes"] = rectangle_shapes_with_attrs \
+                                      + rectangle_shapes_wo_attrs \
+                                      + polygon_shapes_wo_attrs \
+                                      + polygon_shapes_with_attrs
 
             elif annotation_format == "Datumaro 1.0":
-                annotations["shapes"] = rectangle_shapes_with_attrs + \
-                                        rectangle_shapes_wo_attrs + \
-                                        polygon_shapes_wo_attrs + \
-                                        polygon_shapes_with_attrs
+                annotations["shapes"] = rectangle_shapes_with_attrs \
+                                      + rectangle_shapes_wo_attrs \
+                                      + polygon_shapes_wo_attrs \
+                                      + polygon_shapes_with_attrs
                 annotations["tags"] = tags_with_attrs + tags_wo_attrs
+
+            elif annotation_format == "ImageNet 1.0":
+                annotations["tags"] = tags_wo_attrs
+
+            elif annotation_format == "CamVid 1.0":
+                annotations["shapes"] = rectangle_shapes_wo_attrs \
+                                      + polygon_shapes_wo_attrs
 
             else:
                 raise Exception("Unknown format {}".format(annotation_format))
@@ -3422,7 +3951,7 @@ class TaskAnnotationAPITestCase(JobAnnotationAPITestCase):
                 self.assertEqual(response.status_code, HTTP_201_CREATED)
 
                 # 7. check annotation
-                if import_format == "Segmentation mask 1.1":
+                if import_format in {"Segmentation mask 1.1", "MOTS PNG 1.0", "CamVid 1.0"}:
                     continue # can't really predict the result to check
                 response = self._get_api_v1_tasks_id_annotations(task["id"], annotator)
                 self.assertEqual(response.status_code, HTTP_200_OK)
